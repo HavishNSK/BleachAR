@@ -1,9 +1,8 @@
-google-genai==1.64.0
+# Python 3.9-3.12 (MediaPipe 0.10.21 has no wheels for 3.13+). Tested on 3.11.
 mediapipe==0.10.21
 numpy==1.26.4
 opencv-python==4.11.0.86
-protobuf==4.25.8
-python-dotenv==1.2.1
-torch==2.2.2
-ultralytics==8.4.15
 pygame==2.6.1
+# Root certificates for the one-time MediaPipe pose-model download
+# (python.org macOS builds ship without them).
+certifi>=2024.2.2
