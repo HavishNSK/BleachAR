@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from .abilities import AbilityManager, Context
-from .camera import Camera, CameraError
+from .camera import Camera, CameraError, resolve_camera
 from .config import Config
 from .fx import Canvas, ParticleSystem, Shaker
 from .gestures import GestureRecognizer
@@ -117,7 +117,7 @@ class BleachAR:
 
         self.pg = pygame
         self.cfg = cfg
-        self.source = source if source is not None else cfg["camera"]["index"]
+        self.source = resolve_camera(source if source is not None else cfg["camera"]["index"])
         self.demo = demo
         self.max_frames = max_frames
         self.camera: Optional[Camera] = None

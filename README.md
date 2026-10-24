@@ -214,7 +214,7 @@ The 33 tests cover:
 
 | Problem | Fix |
 |---|---|
-| It shows your iPhone instead of the Mac's webcam (Continuity Camera) | Press `V` to switch cameras, or put `{"camera": {"index": 1}}` in `config.json` (or run with `--camera 1`). |
+| It shows your iPhone instead of the Mac's webcam (Continuity Camera) | The default `"index": "auto"` picks the built-in camera by name (needs `pyobjc-framework-AVFoundation`, included in requirements). You can also press `V` to switch cameras, or force one with `--camera N`. |
 | "Could not read frames from camera 0" | Grant camera permission (see Quick start), close other apps using the camera, or try `--camera 1`. |
 | Pose-model download fails (SSL error on macOS) | `pip install certifi` (already in requirements). If it still fails, the app falls back to the bundled full model automatically. |
 | `mediapipe has no attribute 'solutions'` | Install the pinned version: `pip install mediapipe==0.10.21`. |

@@ -11,6 +11,7 @@ from __future__ import annotations
 import platform
 import threading
 import time
+from typing import List, Tuple
 
 import cv2
 import numpy as np
@@ -44,6 +45,51 @@ def camera_help(source) -> str:
     other = 1 if source == 0 else 0
     msg.append(f"Try another index with --camera {other}, or test without a camera using --demo.")
     return "\n".join(msg)
+
+
+def list_cameras() -> List[Tuple[int, str, bool]]:
+    """(OpenCV index, name, is_builtin) for each camera, when the OS can tell us.
+
+    On macOS this asks AVFoundation for devices in the same order OpenCV's
+    AVFoundation backend numbers them. Returns [] elsewhere or if the optional
+    pyobjc-framework-AVFoundation package is missing.
+    """
+    if platform.system() != "Darwin":
+        return []
+    try:
+        import AVFoundation as AV
+    except ImportError:
+        return []
+    devices = list(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeVideo)) + \
+        list(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeMuxed))
+    out = []
+    for i, d in enumerate(devices):
+        name = str(d.localizedName())
+        model = str(d.modelID())
+        builtin = (str(d.deviceType()) == "AVCaptureDeviceTypeBuiltInWideAngleCamera"
+                   or "FaceTime" in name or "Built-in" in name)
+        if "iPhone" in name or "iPhone" in model or "iPad" in model:
+            builtin = False  # Continuity Camera
+        out.append((i, name, builtin))
+    return out
+
+
+def resolve_camera(source):
+    """Turn ``"auto"`` into a camera index, preferring the built-in webcam.
+
+    macOS renumbers cameras whenever an iPhone connects as a Continuity
+    Camera (it usually takes index 0), so a fixed index is unreliable.
+    """
+    if source != "auto":
+        return source
+    cams = list_cameras()
+    for idx, name, builtin in cams:
+        if builtin:
+            print(f"Using camera {idx}: {name}")
+            return idx
+    if cams:
+        print(f"Using camera {cams[0][0]}: {cams[0][1]}")
+    return 0
 
 
 class SyntheticSource:

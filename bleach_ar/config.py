@@ -20,7 +20,9 @@ DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.json")
 # Colors are BGR (OpenCV order) everywhere in the effect code.
 DEFAULTS: Dict[str, Any] = {
     "camera": {
-        "index": 0,
+        # "auto" picks the built-in webcam (skipping an iPhone Continuity
+        # Camera on macOS); or set a number to force a specific camera.
+        "index": "auto",
         "width": 1280,
         "height": 720,
         "fps": 30,

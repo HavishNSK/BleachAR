@@ -6,3 +6,5 @@ pygame==2.6.1
 # Root certificates for the one-time MediaPipe pose-model download
 # (python.org macOS builds ship without them).
 certifi>=2024.2.2
+# macOS: camera names, so the built-in webcam is chosen over an iPhone (Continuity Camera).
+pyobjc-framework-AVFoundation; sys_platform == "darwin"

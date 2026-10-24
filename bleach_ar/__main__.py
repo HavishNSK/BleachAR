@@ -10,7 +10,7 @@ import sys
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m bleach_ar", description="Bleach-inspired webcam AR combat.")
     p.add_argument("--config", help="JSON config file (default: ./config.json if present)")
-    p.add_argument("--camera", type=int, help="camera index (default from config: 0)")
+    p.add_argument("--camera", type=int, help="camera index (default: auto = built-in webcam)")
     p.add_argument("--source", help="video file path, or 'synthetic' for a test pattern")
     p.add_argument("--quality", choices=["low", "medium", "high"], help="quality preset")
     p.add_argument("--width", type=int, help="camera capture width")
