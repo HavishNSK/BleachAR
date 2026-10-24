@@ -10,6 +10,10 @@ import pygame
 
 from .abilities import BANKAI, SHIKAI, Context, Phase
 
+DOMAIN = "Domain Expansion"  # AbilitySpec.category of JJK domains
+TOGGLE_LABELS = {"sword": ("toggle_sword", "Sword"), "aura": ("toggle_aura", "Aura"),
+                 "eyes": ("toggle_eyes", "Eyes"), "mask": ("toggle_mask", "Mask")}
+
 WHITE = (240, 240, 245)
 DIM = (150, 155, 170)
 PANEL = (10, 12, 20, 170)
@@ -28,6 +32,7 @@ def bgr_to_rgb(c) -> Tuple[int, int, int]:
 
 class Fonts:
     def __init__(self, path: Optional[str] = None):
+        self.path = path  # reused by menus.Menus for its own sizes
         def make(size: int, bold: bool = False) -> pygame.font.Font:
             if path:
                 try:
@@ -75,12 +80,22 @@ class HUD:
         k = self.keys.get(action, "?")
         return "ESC" if k == "escape" else k.upper()
 
+    @staticmethod
+    def _is_bleach(mode) -> bool:
+        return mode is None or mode.id == "bleach"
+
     # --- in-game HUD --------------------------------------------------------
     def draw(self, surf: pygame.Surface, ctx: Context, abilities: dict, stats: dict,
-             gesture_frame, gestures_enabled: bool, quality: str, calib: dict) -> None:
+             gesture_frame, gestures_enabled: bool, quality: str, calib: dict,
+             mode=None, mode_keys: Optional[Dict[str, str]] = None) -> None:
+        """``mode`` (a modes.Mode) / ``mode_keys`` (ability id -> key label) are
+        optional; without them the HUD is the original Bleach HUD."""
         W, H = surf.get_size()
-        self._draw_abilities(surf, ctx, abilities, gesture_frame)
-        self._draw_status(surf, ctx, stats, gestures_enabled, quality, W)
+        if self._is_bleach(mode):
+            self._draw_abilities(surf, ctx, abilities, gesture_frame, mode)
+        else:
+            self._draw_mode_abilities(surf, ctx, abilities, gesture_frame, mode, mode_keys or {})
+        self._draw_status(surf, ctx, stats, gestures_enabled, quality, W, mode)
         self._draw_titles(surf, ctx, W, H)
         if stats.get("camera_lost"):
             self._banner(surf, "Camera signal lost - reconnecting...", W, H)
@@ -90,14 +105,15 @@ class HUD:
         if self.show_calibration:
             self._draw_calibration(surf, gesture_frame, calib, ctx, W, H)
         if self.show_help:
-            self._draw_help(surf, W, H)
+            self._draw_help(surf, W, H, mode, mode_keys or {})
         else:
             self._text(surf, f"{self.key_label('help')}: controls", self.fonts.small, DIM, (W - 12, H - 10),
                        anchor="bottomright")
 
-    def _draw_abilities(self, surf, ctx: Context, abilities: dict, gesture_frame) -> None:
+    def _draw_abilities(self, surf, ctx: Context, abilities: dict, gesture_frame, mode=None) -> None:
         x, y, w = 14, 14, 270
-        rect = pygame.Rect(x, y, w, 46 + 52 * len(ABILITY_ROWS) + 30)
+        rows = ABILITY_ROWS if mode is None else [(a.id, a.label) for a in mode.abilities]
+        rect = pygame.Rect(x, y, w, 46 + 52 * len(rows) + 30)
         self._panel(surf, rect)
         level = ctx.level
         self._text(surf, "BLEACH AR", self.fonts.bold, ACCENT, (x + 14, y + 10))
@@ -108,7 +124,7 @@ class HUD:
         yy = y + 44
         held = gesture_frame.held if gesture_frame else {}
         senbon = ctx.level == BANKAI and ctx.bankai_style == "senbonzakura"
-        for name, label in ABILITY_ROWS:
+        for name, label in rows:
             ab = abilities[name]
             key = self.key_label(name)
             if name == "getsuga" and senbon and "senbon_attack" in abilities:
@@ -129,16 +145,70 @@ class HUD:
             if g in held and held[g] > 0 and ab.phase == Phase.IDLE:
                 pygame.draw.rect(surf, (255, 220, 120), (bar.x, bar.y + 7, int(bar.w * held[g]), 3))
             yy += 52
-        toggles = [("toggle_sword", "Sword", ctx.show_sword), ("toggle_aura", "Aura", ctx.show_aura),
-                   ("toggle_eyes", "Eyes", ctx.show_eyes), ("toggle_mask", "Mask", ctx.show_mask)]
-        tx = x + 12
-        for action, label, on in toggles:
+        self._draw_toggles(surf, ctx, mode, x + 12, yy, ACCENT)
+
+    def _draw_toggles(self, surf, ctx: Context, mode, tx: int, yy: int, accent) -> None:
+        names = ("sword", "aura", "eyes", "mask") if mode is None else mode.toggles
+        state = {"sword": ctx.show_sword, "aura": ctx.show_aura, "eyes": ctx.show_eyes, "mask": ctx.show_mask}
+        for n in names:
+            if n not in TOGGLE_LABELS:
+                continue
+            action, label = TOGGLE_LABELS[n]
+            on = state[n]
             txt = f"{self.key_label(action)} {label}"
             img = self.fonts.small.render(txt, True, (20, 25, 35) if on else DIM)
             pill = pygame.Rect(tx, yy, img.get_width() + 12, 22)
-            pygame.draw.rect(surf, ACCENT if on else (45, 50, 65), pill, border_radius=11)
+            pygame.draw.rect(surf, accent if on else (45, 50, 65), pill, border_radius=11)
             surf.blit(img, img.get_rect(center=pill.center))
             tx += pill.w + 5
+
+    def _draw_mode_abilities(self, surf, ctx: Context, abilities: dict, gesture_frame, mode,
+                             mode_keys: Dict[str, str]) -> None:
+        """Ability panel for a non-Bleach mode (e.g. Jujutsu Kaisen)."""
+        x, y, w = 14, 14, 310
+        rows = [a for a in mode.abilities if a.id in abilities]
+        rect = pygame.Rect(x, y, w, 62 + 52 * len(rows) + 30)
+        self._panel(surf, rect)
+        accent, accent2 = tuple(mode.accent), tuple(mode.accent2)
+        self._text(surf, mode.title, self.fonts.bold, accent, (x + 14, y + 10))
+        pygame.draw.line(surf, accent, (x + 14, y + 34), (x + 74, y + 34), 2)
+        pygame.draw.line(surf, accent2, (x + 78, y + 34), (x + 98, y + 34), 2)
+        domain = next((a for a in rows if a.category == DOMAIN and abilities[a.id].busy), None)
+        if domain is not None:
+            on = 0.5 + 0.5 * math.sin(ctx.now * 6)
+            pygame.draw.circle(surf, accent2, (x + 112, y + 34), 2 + int(2 * on))
+            self._text(surf, domain.label.upper(), self.fonts.small, accent2, (x + 122, y + 26))
+        else:
+            self._text(surf, "CURSED ENERGY", self.fonts.small, DIM, (x + 110, y + 26))
+        yy = y + 60
+        held = gesture_frame.held if gesture_frame else {}
+        bindings = ctx.cfg.get("modes", {}).get(mode.id, {}).get("gestures", {})
+        for spec in rows:
+            ab = abilities[spec.id]
+            is_domain = spec.category == DOMAIN
+            col = accent2 if is_domain else accent
+            key = mode_keys.get(spec.id, "?")
+            badge = pygame.Rect(x + 12, yy, 26, 26)
+            pygame.draw.rect(surf, (40, 30, 60) if not is_domain else (60, 22, 34), badge, border_radius=6)
+            pygame.draw.rect(surf, col, badge, 1, border_radius=6)
+            self._text(surf, key, self.fonts.bold, WHITE, badge.center, anchor="center", shadow=False)
+            lr = self._text(surf, spec.label, self.fonts.body, WHITE, (x + 48, yy + 2))
+            if is_domain:  # small diamond marks a Domain Expansion
+                cx, cy = lr.right + 8, lr.centery
+                pygame.draw.polygon(surf, accent2, [(cx, cy - 4), (cx + 4, cy), (cx, cy + 4), (cx - 4, cy)])
+            state, color, frac = self._ability_state(ab, ctx, spec.id)
+            if is_domain and ab.busy:
+                color = accent2
+            self._text(surf, state, self.fonts.small, color, (x + w - 14, yy + 4), anchor="topright")
+            bar = pygame.Rect(x + 48, yy + 28, w - 62, 5)
+            pygame.draw.rect(surf, (45, 50, 65), bar, border_radius=3)
+            if frac > 0:
+                pygame.draw.rect(surf, color, (bar.x, bar.y, int(bar.w * frac), bar.h), border_radius=3)
+            g = bindings.get(spec.id)
+            if g in held and held[g] > 0 and ab.phase == Phase.IDLE:
+                pygame.draw.rect(surf, (255, 220, 120), (bar.x, bar.y + 7, int(bar.w * held[g]), 3))
+            yy += 52
+        self._draw_toggles(surf, ctx, mode, x + 12, yy, accent)
 
     def _ability_state(self, ab, ctx: Context, name: str) -> Tuple[str, tuple, float]:
         if ctx.locked_by and ctx.locked_by != name:
@@ -156,8 +226,9 @@ class HUD:
             return f"{ab.cooldown_left():.1f}s", (240, 170, 80), 1.0 - (ab.t / d if d else 1.0)
         return ab.phase.value, (255, 230, 120), ab.progress
 
-    def _draw_status(self, surf, ctx: Context, stats: dict, gestures_enabled: bool, quality: str, W: int) -> None:
-        w, h = 280, 148
+    def _draw_status(self, surf, ctx: Context, stats: dict, gestures_enabled: bool, quality: str, W: int,
+                     mode=None) -> None:
+        w, h = 280, 148 if mode is None else (168 if mode.id == "bleach" else 148)
         rect = pygame.Rect(W - w - 14, 14, w, h)
         self._panel(surf, rect)
         x, y = rect.x + 14, rect.y + 10
@@ -177,13 +248,25 @@ class HUD:
         g = "ON" if gestures_enabled else "OFF"
         self._text(surf, f"Gestures {g}  ({self.key_label('toggle_gestures')})", self.fonts.small,
                    WHITE if gestures_enabled else DIM, (x, y + 76))
-        mode = "hand-only" if ctx.sword_mode == "hand" else ctx.current_weapon()
+        if not self._is_bleach(mode):
+            self._text(surf, f"Eyes: {ctx.eye_style}", self.fonts.small, DIM, (x, y + 96))
+            self._mode_line(surf, mode, x, y + 116)
+            return
+        weapon = "hand-only" if ctx.sword_mode == "hand" else ctx.current_weapon()
         if ctx.level == BANKAI and ctx.bankai_style == "senbonzakura":
-            mode = "blade swarm"
-        self._text(surf, f"Weapon: {mode}  Eyes: {ctx.eye_style}", self.fonts.small, DIM, (x, y + 96))
+            weapon = "blade swarm"
+        self._text(surf, f"Weapon: {weapon}  Eyes: {ctx.eye_style}", self.fonts.small, DIM, (x, y + 96))
         style = BANKAI_STYLE_NAMES.get(ctx.bankai_style, ctx.bankai_style)
         self._text(surf, f"Bankai style: {style}  ({self.key_label('cycle_bankai')})", self.fonts.small, DIM,
                    (x, y + 116))
+        if mode is not None:
+            self._mode_line(surf, mode, x, y + 136)
+
+    def _mode_line(self, surf, mode, x: int, y: int) -> None:
+        name = "Bleach" if mode.id == "bleach" else "JJK" if mode.id == "jjk" else mode.title.title()
+        r = self._text(surf, "Mode: ", self.fonts.small, DIM, (x, y))
+        r = self._text(surf, name, self.fonts.small, tuple(mode.accent), (r.right, y))
+        self._text(surf, f"  ({self.key_label('menu')}: menu)", self.fonts.small, DIM, (r.right, y))
 
     def _draw_titles(self, surf, ctx: Context, W: int, H: int) -> None:
         for t in ctx.titles:
@@ -223,7 +306,10 @@ class HUD:
         self._panel(surf, rect.inflate(40, 30), 210)
         surf.blit(img, rect)
 
-    def _draw_help(self, surf, W: int, H: int) -> None:
+    def _draw_help(self, surf, W: int, H: int, mode=None, mode_keys: Optional[Dict[str, str]] = None) -> None:
+        if not self._is_bleach(mode):
+            self._draw_mode_help(surf, W, H, mode, mode_keys or {})
+            return
         rows = [
             ("getsuga", "Getsuga Tensho (or swing fast); in Senbonzakura: blade attack"),
             ("shikai", "Shikai on/off (or hold two fingers up)"),
@@ -247,15 +333,43 @@ class HUD:
             ("help", "Hide this help"),
             ("exit", "Exit"),
         ]
-        w, h = 560, 40 + 25 * len(rows)
-        rect = pygame.Rect((W - w) // 2, (H - h) // 2, w, h)
+        if mode is not None:
+            rows.insert(-2, ("menu", "Ability list / back to mode select"))
+        self._help_box(surf, W, H, [(self.key_label(a), d) for a, d in rows], "Controls", ACCENT)
+
+    def _draw_mode_help(self, surf, W: int, H: int, mode, mode_keys: Dict[str, str]) -> None:
+        rows = [(mode_keys.get(a.id, "?"), f"{a.label}" + (" (Domain Expansion)" if a.category == DOMAIN else ""))
+                for a in mode.abilities]
+        for n in mode.toggles:
+            if n in TOGGLE_LABELS:
+                action, label = TOGGLE_LABELS[n]
+                rows.append((self.key_label(action), f"Toggle {label.lower()}"))
+        rows += [(self.key_label(a), d) for a, d in (
+            ("cycle_eye_style", "Cycle eye style"),
+            ("toggle_gestures", "Gestures on/off"),
+            ("toggle_calibration", "Gesture calibration panel"),
+            ("cycle_quality", "Quality low / medium / high"),
+            ("toggle_debug", "Show tracking landmarks"),
+            ("fullscreen", "Fullscreen"),
+            ("next_camera", "Switch camera (e.g. built-in vs iPhone)"),
+            ("reset", "Reset techniques and domains"),
+            ("menu", "Technique list / back to mode select"),
+            ("help", "Hide this help"),
+            ("exit", "Exit"),
+        )]
+        self._help_box(surf, W, H, rows, f"Controls - {mode.title.title()}", tuple(mode.accent))
+
+    def _help_box(self, surf, W: int, H: int, rows, title: str, accent) -> None:
+        step = max(19, min(25, (H - 60) // max(1, len(rows))))  # fit short windows
+        w, h = 560, 48 + step * len(rows)
+        rect = pygame.Rect((W - w) // 2, max(0, (H - h) // 2), w, h)
         self._panel(surf, rect, 225)
-        self._text(surf, "Controls", self.fonts.big, ACCENT, (rect.x + 20, rect.y + 6))
+        self._text(surf, title, self.fonts.big, accent, (rect.x + 20, rect.y + 6))
         y = rect.y + 46
-        for action, desc in rows:
-            self._text(surf, self.key_label(action), self.fonts.bold, (255, 220, 120), (rect.x + 24, y))
+        for key, desc in rows:
+            self._text(surf, key, self.fonts.bold, (255, 220, 120), (rect.x + 24, y))
             self._text(surf, desc, self.fonts.body, WHITE, (rect.x + 100, y))
-            y += 25
+            y += step
 
     def _draw_calibration(self, surf, gf, calib: dict, ctx: Context, W: int, H: int) -> None:
         w, h = 420, 236

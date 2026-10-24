@@ -98,6 +98,11 @@ class Context:
     # by AbilityManager; None when an ability runs without a manager.
     swarm: Optional[Any] = None
     titles: List[Title] = field(default_factory=list)
+    # Active anime mode ("bleach" / "jjk", see modes.py); set by AbilityManager.set_mode.
+    mode: str = "bleach"
+    # An effect may set this for one frame (reset in AbilityManager.update) to
+    # recolour the aura/energy, e.g. a Domain Expansion's palette.
+    energy_override: Optional[Tuple[int, int, int]] = None
 
     @property
     def diag(self) -> float:
@@ -105,6 +110,10 @@ class Context:
 
     def energy_color(self) -> Tuple[int, int, int]:
         """Current spiritual-energy color for the transformation level."""
+        if self.energy_override is not None:
+            return tuple(self.energy_override)
+        if self.mode == "jjk":
+            return tuple(self.cfg.get("modes", {}).get("jjk", {}).get("aura_color", (255, 110, 150)))
         ab = self.cfg["abilities"]
         senbon = self.bankai_style == "senbonzakura"
         if senbon and self.locked_by == "bankai":  # Senbonzakura activation / release
@@ -218,17 +227,16 @@ class Ability:
 
 
 class AbilityManager:
-    """Owns the timed abilities and the persistent effects, in draw order."""
+    """Owns every ability and persistent effect; only the active mode's
+    abilities are updated, rendered and triggerable (see modes.py)."""
 
     def __init__(self, ctx: Context):
         # Imported here so each effect module only depends on this one.
         from .aura import ReiatsuAura
-        from .cero import Cero
         from .eyes import EyeEffects
-        from .getsuga import GetsugaTensho
-        from .senbonzakura import BladeSwarm, SenbonzakuraAttack
+        from .modes import ABILITY_CLASSES, BLEACH, MODES, load_class
+        from .senbonzakura import BladeSwarm
         from .sword import Zanpakuto
-        from .transform import Bankai, Shikai
 
         ab = ctx.cfg["abilities"]
         self.ctx = ctx
@@ -238,13 +246,36 @@ class AbilityManager:
         self.sword = Zanpakuto(ctx.cfg)
         self.aura = ReiatsuAura(ctx.cfg)
         self.eyes = EyeEffects(ctx.cfg)
+        params_key = {"senbon_attack": "senbonzakura"}
         self.abilities: Dict[str, Ability] = {
-            "getsuga": GetsugaTensho(ab["getsuga"]),
-            "shikai": Shikai(ab["shikai"]),
-            "bankai": Bankai(ab["bankai"]),
-            "cero": Cero(ab["cero"]),
-            "senbon_attack": SenbonzakuraAttack(ab["senbonzakura"]),
-        }
+            aid: load_class(aid)(ab.get(params_key.get(aid, aid), {})) for aid in ABILITY_CLASSES}
+        self._modes = MODES
+        if ctx.mode not in MODES:
+            ctx.mode = BLEACH
+        self._active = MODES[ctx.mode].ability_ids
+
+    # --- modes ------------------------------------------------------------
+    @property
+    def mode(self):
+        return self._modes[self.ctx.mode]
+
+    def active_abilities(self) -> Dict[str, Ability]:
+        return {k: self.abilities[k] for k in self._active}
+
+    def set_mode(self, mode_id: str) -> None:
+        """Switch universe: stop everything from the old mode, apply new defaults."""
+        if mode_id not in self._modes:
+            raise KeyError(mode_id)
+        self.reset()
+        ctx = self.ctx
+        ctx.mode = mode_id
+        self._active = self._modes[mode_id].ability_ids
+        d = self._modes[mode_id].defaults
+        ctx.eye_style = str(d.get("eye_style", ctx.eye_style))
+        ctx.show_sword = bool(d.get("show_sword", ctx.show_sword))
+        ctx.show_aura = bool(d.get("show_aura", ctx.show_aura))
+        if mode_id != "bleach":
+            ctx.show_mask = False
 
     def routed(self, name: str) -> str:
         """In Senbonzakura Bankai the Getsuga key / sword swing commands the blades."""
@@ -253,28 +284,44 @@ class AbilityManager:
         return name
 
     def trigger(self, name: str) -> bool:
-        ab = self.abilities.get(self.routed(name))
-        ok = bool(ab and ab.trigger(self.ctx))
-        if ok and ab is self.abilities["bankai"]:
-            # A transformation (or its release) takes over the scene: cancel any
-            # attack still in flight so it can't play through the sequence or
-            # re-command a swarm that is dispersing.
-            for other in self.abilities.values():
-                if other is not ab and other.busy:
+        name = self.routed(name)
+        if name not in self._active:
+            return False  # abilities of another mode never fire
+        ab = self.abilities[name]
+        takes_over = getattr(ab, "takes_over", False)
+        if takes_over and not ab.busy and any(
+                o is not ab and getattr(o, "takes_over", False) and o.busy for o in self.active_abilities().values()):
+            return False  # one Domain Expansion at a time
+        was_busy = ab.busy  # a press while running is a cancel/collapse, not a new start
+        ok = ab.trigger(self.ctx)
+        if ok and not was_busy and (takes_over or name == "bankai"):
+            # A transformation / domain takes over the scene: cancel attacks
+            # still in flight so they can't play through it.
+            for other in self.active_abilities().values():
+                if other is not ab and other.busy and not getattr(other, "takes_over", False):
                     other.reset(self.ctx)
-        return ok
+        return bool(ok)
 
+    # --- frame ------------------------------------------------------------
     def update(self) -> None:
         ctx = self.ctx
         ctx.aura_boost = 0.0
-        self.sword.update(ctx)
-        for ab in self.abilities.values():
+        ctx.energy_override = None
+        if ctx.canvas.flash < 0.01:
+            ctx.canvas.flash_color = (255, 255, 255)  # effects that tint a flash don't leak the colour
+        self.sword.update(ctx)  # also used for fist-swing gestures in every mode
+        for ab in self.active_abilities().values():
             ab.update(ctx)
-        self._update_swarm()
+        if ctx.mode == "bleach":
+            self._update_swarm()
         self.aura.update(ctx)
         self.eyes.update(ctx)
         ctx.particles.update(ctx.dt)
         ctx.titles = [t for t in ctx.titles if ctx.now - t.start < t.duration]
+        mask = ctx.tracking.mask
+        if mask is None and (ctx.tracking.pose.ok or ctx.tracking.face.ok):
+            mask, _ = self.aura._silhouette(ctx)  # pose/face silhouette fallback (low quality)
+        ctx.canvas.set_person_src(mask)
 
     def _update_swarm(self) -> None:
         """Keep the blade swarm consistent with the transformation level."""
@@ -298,15 +345,18 @@ class AbilityManager:
         """Back-to-front: aura, far-side blades, eyes/mask, sword, abilities,
         near-side blades, particles."""
         ctx = self.ctx
+        bleach = ctx.mode == "bleach"
         if ctx.show_aura:
             self.aura.render(ctx)
-        self.swarm.render(ctx, "back")
+        if bleach:
+            self.swarm.render(ctx, "back")
         self.eyes.render(ctx)
-        if ctx.show_sword:
+        if bleach and ctx.show_sword:
             self.sword.render(ctx)
-        for ab in self.abilities.values():
+        for ab in self.active_abilities().values():
             ab.render(ctx)
-        self.swarm.render(ctx, "front")
+        if bleach:
+            self.swarm.render(ctx, "front")
         ctx.particles.render(ctx.canvas)
 
     def reset(self) -> None:
@@ -318,8 +368,12 @@ class AbilityManager:
         ctx.level = SEALED
         ctx.locked_by = None
         ctx.sword_sink = 0.0
+        ctx.energy_override = None
+        ctx.aura_boost = 0.0
         self.swarm.clear()
         # ctx.bankai_style is kept (the user's last choice).
         ctx.titles.clear()
         ctx.particles.clear()
         ctx.canvas.flash = 0.0
+        ctx.canvas.flash_color = (255, 255, 255)
+        ctx.shaker.amount = 0.0

@@ -16,6 +16,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--width", type=int, help="camera capture width")
     p.add_argument("--height", type=int, help="camera capture height")
     p.add_argument("--fps", type=int, help="camera frame rate")
+    p.add_argument("--mode", choices=["bleach", "jjk"], help="start in this mode (skips the mode selector)")
     p.add_argument("--demo", action="store_true",
                    help="no camera: synthetic person with a scripted ability showcase")
     p.add_argument("--frames", type=int, default=0, help="exit after N frames and print timings")
@@ -49,7 +50,7 @@ def main(argv=None) -> int:
 
     from .app import BleachAR
 
-    app = BleachAR(cfg, source=source, demo=args.demo, max_frames=args.frames)
+    app = BleachAR(cfg, source=source, demo=args.demo, max_frames=args.frames, mode=args.mode)
     app.run()
     return 0
 

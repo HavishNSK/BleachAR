@@ -1,10 +1,13 @@
-# Bleach AR: Real-Time Soul Reaper Combat in Your Webcam
+# Bleach AR: Real-Time Anime Combat in Your Webcam
 
-A desktop app that tracks your face, eyes, hands and body through your webcam and layers Bleach-inspired abilities over the live feed. You get a Zanpakutō that follows your fist, Getsuga Tenshō slashes, a reiatsu aura, Shikai and Bankai transformations, Cero blasts, glowing eyes and a mask.
+A desktop app that tracks your face, eyes, hands and body through your webcam and layers anime abilities over the live feed. It has two universes, chosen from a menu at startup:
+
+- **BLEACH:** a Zanpakutō that follows your fist, Getsuga Tenshō slashes, a reiatsu aura, Shikai and Bankai transformations (Senbonzakura Kageyoshi or Tensa), Cero blasts, glowing eyes and a mask.
+- **JUJUTSU KAISEN:** Lapse: Blue, Reversal: Red, Hollow Purple and Black Flash, plus two Domain Expansions, Unlimited Void and Malevolent Shrine, which replace the room behind you while you stay visible.
 
 Everything runs locally on the CPU with Python, OpenCV, MediaPipe and pygame. There are no API keys, no cloud services and no GPU requirement, and every effect is generated procedurally. The app ships no copyrighted artwork.
 
-> Fan-made, non-commercial project for learning computer vision. *Bleach* and related names are trademarks of Tite Kubo, Shueisha and VIZ Media. This repo started as a fork of [ioscbasotcstw/NarutoAR](https://github.com/ioscbasotcstw/NarutoAR); see [Credits](#credits).
+> Fan-made, non-commercial project for learning computer vision. *Bleach* and related names are trademarks of Tite Kubo, Shueisha and VIZ Media; *Jujutsu Kaisen* and related names are trademarks of Gege Akutami and Shueisha. All visuals are original procedural designs. This repo started as a fork of [ioscbasotcstw/NarutoAR](https://github.com/ioscbasotcstw/NarutoAR); see [Credits](#credits).
 
 ---
 
@@ -36,7 +39,12 @@ pip install -r requirements.txt
 python -m bleach_ar
 ```
 
-On the startup screen, press **Space** or **Enter**. The first launch downloads a small MediaPipe pose model (a few MB, one time only).
+The app opens on a **mode selector**:
+1. Pick **BLEACH** or **JUJUTSU KAISEN** with the arrow keys or the mouse, and press **Enter**.
+2. The next screen lists that mode's abilities with their keys and gestures. Press **Enter** to start the camera.
+3. In game, **Tab** reopens the menu. You can switch universes there without restarting the camera.
+
+To skip the menu, run `python -m bleach_ar --mode jjk` (or `--mode bleach`). The first launch downloads a small MediaPipe pose model (a few MB, one time only).
 
 ### Try it without a webcam
 
@@ -44,11 +52,13 @@ On the startup screen, press **Space** or **Enter**. The first launch downloads 
 python -m bleach_ar --demo
 ```
 
-`--demo` replaces the camera and tracking with a synthetic figure and plays a scripted showcase of every ability. The keyboard controls still work.
+`--demo` replaces the camera and tracking with a synthetic figure and plays a scripted showcase of every ability in the chosen mode (`python -m bleach_ar --demo --mode jjk` for Jujutsu Kaisen). The keyboard controls still work.
 
 ---
 
 ## Controls
+
+### Bleach mode
 
 | Key | Action |
 |---|---|
@@ -74,7 +84,27 @@ python -m bleach_ar --demo
 | `H` | Show/hide controls |
 | `ESC` | Exit |
 
-All bindings can be changed under `keys` in the config (see [Configuration](#configuration)).
+### Jujutsu Kaisen mode
+
+| Key | Action |
+|---|---|
+| `1` | **Lapse: Blue** |
+| `2` | **Reversal: Red** |
+| `3` | **Hollow Purple** |
+| `4` | **Black Flash** |
+| `Z` | **Domain Expansion: Unlimited Void**; press again to collapse it early |
+| `X` | **Domain Expansion: Malevolent Shrine**; press again to end it early |
+| `6` / `7` | Toggle aura / glowing eyes (blue by default) |
+
+The common keys (`9`, `G`, `C`, `Q`, `D`, `F`, `V`, `R`, `H`, `ESC`) work in both modes. Bleach-only keys (`5`, `8`, `0`, `B`, `M`) do nothing in Jujutsu Kaisen mode.
+
+### Both modes
+
+| Key | Action |
+|---|---|
+| `Tab` | Open the menu: switch universe, or `Esc` to resume |
+
+Bleach bindings live under `keys` in the config, and Jujutsu Kaisen bindings under `modes.jjk.keys` (see [Configuration](#configuration)).
 
 ### Gestures
 
@@ -87,6 +117,17 @@ Gestures add to the keyboard; they never replace it. They are rule-based, built 
 | Hold an **open palm** (~0.8 s) | Cero (raise your palm to fire at the camera, or point your forearm to fire a beam) |
 | Hold **index + middle finger** up (~0.8 s) | Shikai |
 | Hold **both palms open above your shoulders** (~0.8 s) | Bankai |
+
+In Jujutsu Kaisen mode the same gestures map to:
+
+| Gesture | Triggers |
+|---|---|
+| Fast **fist swing** (a punch) | Black Flash |
+| Hold an **open palm** | Hollow Purple |
+| Hold **index + middle finger** up | Unlimited Void |
+| Hold **both palms above your shoulders** | Malevolent Shrine |
+
+Blue and Red are keyboard-only (`1` / `2`). Gesture bindings live in `gestures.bindings` (Bleach) and `modes.jjk.gestures`.
 
 MediaPipe Holistic finds hands from your body pose, so **keep your head and shoulders in frame**. Close-ups of only your hands are not detected.
 
@@ -123,6 +164,19 @@ Every timed ability runs through the same state machine: `IDLE → CHARGING → 
 | **Cero** | A crimson orb charges at your open palm, with crackling arcs and converging particles. It then fires a layered beam along your forearm, or, if your palm faces the camera, a screen-filling blast toward the viewer, followed by an impact. |
 | **Eyes and mask** | Glowing irises anchored to MediaPipe's iris landmarks, hidden when you blink, leaving light streaks when you turn quickly. The "hollow" style darkens the whites of the eyes. The optional procedural bone mask follows head position, scale and tilt. Both fade out gracefully when face tracking is lost. |
 
+### Jujutsu Kaisen abilities
+
+| Ability | What you see |
+|---|---|
+| **Lapse: Blue** (cursed technique) | A compact blue-black core with a bright rim at your pointing finger or palm. Spiral streaks and particles are pulled in and swallowed, and the room bends inward around it with a pinch-and-swirl distortion. It then collapses and releases with a small pop. |
+| **Reversal: Red** (cursed technique) | A white-hot red core that bursts outward: three staggered shockwave rings, flying debris, a short bulge and ripple distortion, and nearby particles pushed away. It fades smoothly, with no lingering flash. |
+| **Hollow Purple** (cursed technique) | A Blue orb at one hand and a Red orb at the other, clearly separate, then orbiting together and merging into a violet-white core. The core launches with a churning purple shell, a white centre, a bow shock, a tapered wake and a moving distortion. It ends in an expanding distortion ring. It aims along your fist or swing, or your pointing finger; with no hands it flies away into the scene in perspective. |
+| **Black Flash** (cursed technique) | A short anticipation (the room darkens, speed lines converge on your fist), then a black-and-red impact: angular branching lightning with black cores and red rims, a fast shockwave, chromatic aberration, and fading afterimages of the bolts. It does not try to detect the anime's timing rule; it is a responsive visual. |
+| **Unlimited Void** (Domain Expansion) | The room dims and a bright boundary ring expands from you. Inside it, the room is replaced (you stay visible) by an infinite cosmic space: a rotating nebula, three parallax star layers rushing outward, a twisted hexagonal tunnel, rotating dial rings and streams of glyph-like light. It builds in speed, then the boundary collapses and the room returns. `Z` again collapses it early. Other cursed techniques still work inside it. |
+| **Malevolent Shrine** (Domain Expansion) | A dark red pulse spreads from you, and a shrine materialises behind you: tiered roofs with upturned eaves, a fanged maw, bone spires, skull piles and red fog. Glowing cracks spread across the ground. Slashes cut through the scene at three depths, irregular and spread out, with bright cores and short trails. It ends with a cross-slash as the shrine crumbles. `X` again ends it early. Other techniques are locked while it runs. |
+
+Only one Domain Expansion can run at a time. Switching modes (Tab) stops everything from the previous mode: abilities, transformations, particles, flashes, shake, and domain backdrops. The camera and tracking keep running.
+
 ---
 
 ## Configuration
@@ -140,6 +194,8 @@ Defaults live in `bleach_ar/config.py`. To override them, create `config.json` i
 
 Bankai style and Senbonzakura tuning live under `abilities.bankai.style` (`"senbonzakura"` or `"tensa"`) and `abilities.senbonzakura`. The tunable keys are `count` (blade count at medium quality, scaled by the quality preset and capped at 300), `orbit_radius` (maximum orbit radius as a fraction of the frame diagonal), `orbit_speed`, `blade_size`, `intensity`, the three energy colours, the petal paint colours (`petal_color`, `petal_base_color`, `petal_tip_color`), and the attack timings `charge` / `active` / `impact` / `cooldown`.
 
+Jujutsu Kaisen tuning lives under `abilities.blue`, `abilities.red`, `abilities.hollow_purple`, `abilities.black_flash`, `abilities.unlimited_void` and `abilities.malevolent_shrine`. The keys are the phase timings (`charge` / `active` / `impact` / `cooldown`, where `active` is the domain's duration), plus `intensity`, `size` and colours. The techniques also take `warp`, `particles`, `shake` and `flash` multipliers. Unlimited Void adds `star_count`, `stream_count`, `speed`, `aberration` and `warps`. Malevolent Shrine adds `slash_density`, `slash_rate`, `slash_warp` and `parallax`. `modes.start` (`""`, `"bleach"` or `"jjk"`) skips the mode selector.
+
 To get a complete file to edit, run `python -m bleach_ar --write-config config.json`.
 
 ### Command-line options
@@ -151,6 +207,7 @@ To get a complete file to edit, run `python -m bleach_ar --write-config config.j
 | `--width / --height / --fps` | Camera capture settings |
 | `--source FILE` | Play a video file instead of the webcam |
 | `--source synthetic` | Animated test pattern |
+| `--mode bleach\|jjk` | Start in this mode and skip the mode selector |
 | `--demo` | Synthetic person and scripted showcase |
 | `--frames N` | Exit after N frames and print a timing report |
 | `--headless` | No window (for tests) |
@@ -162,6 +219,8 @@ To get a complete file to edit, run `python -m bleach_ar --write-config config.j
 | `low` (integrated graphics / older laptops) | 640 px | 480 px | lite | off (pose silhouette) | 400 |
 | `medium` (default) | 960 px | 640 px | lite | on | 900 |
 | `high` | 1280 px | 640 px | full | on | 1600 |
+
+Each preset also sets rendering limits: `bloom` (single or dual scale), `warps`, `max_warps` and `warp_grid` (distortion budget), and `aberration`. Low quality uses single-scale bloom, at most 2 warps, and no aberration.
 
 Tracking runs on a worker thread by default (`"tracking": {"async": true}`), so inference overlaps rendering. The trade-off is that overlays can trail very fast motion by about one inference (~25 ms). Set `async` to `false` for perfectly frame-locked overlays at a lower frame rate.
 
@@ -194,7 +253,19 @@ Measured on an **Apple M1 MacBook Air (8 GB)** running Python 3.11. The input wa
 - The render loop is capped at 60 FPS.
 - The clip played back at about 27 fps from a file. A webcam is paced by the driver instead.
 - Peak effect load (the Bankai release burst) measured about 10–11 ms per frame at 960×540.
-- These figures have **not** been measured with a live webcam. The HUD shows live FPS, camera fps, tracking time and effects time, so you can check your own machine.
+- Live webcam sessions on the same Mac have measured **24–30 camera fps**, with tracking at **31–88 ms median**. The slow end came with heavy memory pressure, low disk space and thermal throttling over long sessions. The HUD shows live FPS, camera fps, tracking time and effects time.
+
+**Effect and compositing cost at 960×540** (synthetic tests; see [docs/RENDERING.md](docs/RENDERING.md) for the full benchmark):
+
+| Effect | Effect update + render | Composite incl. backdrop/warps |
+|---|---|---|
+| Plain frame (bloom only) | — | ~1.7 ms |
+| Unlimited Void (active) | ~2.5 ms | ~5.5 ms |
+| Malevolent Shrine (active) | ~3.1 ms | ~4.3 ms (7.4 ms total) |
+| Blue / Red / Hollow Purple / Black Flash | 1–3 ms | 3.5–6 ms (warps add ~2–4 ms) |
+| Everything on at once (backdrop + 6 warps + aberration) | — | ~6 ms (was 11 ms before optimisation) |
+
+**Rendering approach:** a CPU pipeline built with OpenCV and numpy, drawn into pygame. I evaluated ModernGL (OpenGL 4.1 over Metal on the M1). A shader pass benchmarked at 7.5 ms per frame, of which about 4 ms was just uploading the frame and reading it back, so it is not used. [docs/RENDERING.md](docs/RENDERING.md) has the numbers, the techniques used and the path to a GPU renderer if ever needed.
 
 ---
 
@@ -204,7 +275,11 @@ Measured on an **Apple M1 MacBook Air (8 GB)** running Python 3.11. The input wa
 python -m unittest discover -s tests -v
 ```
 
-The 94 tests cover:
+The 195 tests cover:
+- the mode registry, so every ability belongs to exactly one mode; no cross-mode triggering; full cleanup when switching mid-Bankai or mid-domain; the one-domain-at-a-time rule;
+- the real menu flow, driven by scripted key presses: picking a mode, going back, Tab mid-game to switch modes while the camera is reused, and Bleach-only keys ignored in Jujutsu Kaisen mode;
+- each Jujutsu Kaisen ability's lifecycle, early cancel, reset, tracking loss, resolution changes, Blue and Red converging into Hollow Purple, projectile direction and impact, and particle limits;
+- the compositor: backdrop only behind the person, warp directions, quality flags, and no per-frame reallocation;
 - config merging and errors;
 - every state-machine transition, including cooldowns, retrigger blocking and the Bankai lock;
 - gesture classification, debounce, hold, release and re-hold, the global cooldown, and dropped frames;
@@ -232,7 +307,10 @@ The 94 tests cover:
 
 ## Known limitations
 
-- **No live-webcam testing yet.** Tracking was checked on real photos and video, but nobody has run the app against a live camera. Gesture thresholds and effect brightness may need tuning for your room and lighting.
+- **The Jujutsu Kaisen mode hasn't been played on a live webcam yet.** Its effects were checked on synthetic frames and in headless runs. The Bleach mode has been played live. Gesture thresholds and effect brightness may need tuning for your room and lighting.
+- **Domains replace the room using the segmentation mask.** On low quality there is no segmentation, so the person outline is approximated from pose landmarks and is rougher. Hands raised away from the body can be partly covered by the backdrop.
+- **First-frame hitch for domains.** The first time each domain runs at a given resolution, it spends about 40–90 ms building its environment. Later uses hit the cache.
+- **Blue and Red are keyboard-only.** There is no gesture for them.
 - **The sword is a 2D approximation** from hand landmarks. With knuckles facing the camera and your forearm upright, the blade leans diagonally toward the thumb side, as a real grip would, not straight up. When the fist points straight at the camera, the direction is less certain. Finger occlusion uses a mask built from the landmarks, so the handle edge can be off by a few pixels around your fingers.
 - **Hands need the body in view.** Holistic finds hands from the body pose, so close-up hands without a body aren't detected.
 - **Async tracking can lag slightly.** Overlays can trail very fast motion by about one inference (~25 ms). Set `"async": false` to avoid this, at a lower frame rate.
@@ -251,8 +329,14 @@ bleach_ar/
   camera.py       threaded webcam/video capture, helpful errors
   tracking.py     MediaPipe Holistic wrapper: smoothing, loss-hold, async worker, model download
   gestures.py     rule-based hand gestures, debounce, hold, cooldown
-  abilities.py    ability state machine, shared per-frame Context, AbilityManager
-  fx.py           compositing (additive light + bloom), particles, trails, shake
+  modes.py        anime modes (Bleach / Jujutsu Kaisen) and the abilities registered to each
+  menus.py        mode selector, ability panel, transitions
+  abilities.py    ability state machine, shared per-frame Context, mode-aware AbilityManager
+  fx.py           compositing (additive light, two-scale bloom, backdrop behind the person, warps,
+                  chromatic aberration, quality flags), particles, trails, lightning, starfield, shake
+  jjk/            Jujutsu Kaisen: techniques.py (Blue, Red, Hollow Purple, Black Flash),
+                  unlimited_void.py, malevolent_shrine.py
+  senbonzakura.py Senbonzakura petal swarm and attack
   sword.py        Zanpakuto summon/dismiss, pose + One-Euro filter, blade/image rendering, finger occlusion, sinking
   getsuga.py      Getsuga Tensho
   transform.py    Shikai and Bankai
@@ -264,6 +348,8 @@ bleach_ar/
   synthetic.py    synthetic person for --demo and tests
 tools/
   make_assets.py  renders the bundled sword and mask art into assets/
+  bench_render.py compositor benchmark (see docs/RENDERING.md)
+docs/RENDERING.md rendering pipeline, benchmarks, techniques and the ModernGL evaluation
 assets/           original sword (katana, cleaver, dark) and mask PNGs
 tests/            unittest suite
 ```

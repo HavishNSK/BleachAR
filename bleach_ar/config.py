@@ -43,6 +43,12 @@ DEFAULTS: Dict[str, Any] = {
             "segmentation": False,
             "max_particles": 400,
             "glow_scale": 0.25,
+            # Render flags read by fx.Canvas (canvas.quality = preset).
+            "bloom": "single",
+            "warps": True,
+            "max_warps": 2,
+            "aberration": False,
+            "warp_grid": 8,
         },
         "medium": {
             "render_width": 960,
@@ -51,6 +57,11 @@ DEFAULTS: Dict[str, Any] = {
             "segmentation": True,
             "max_particles": 900,
             "glow_scale": 0.33,
+            "bloom": "dual",
+            "warps": True,
+            "max_warps": 4,
+            "aberration": True,
+            "warp_grid": 6,
         },
         "high": {
             "render_width": 1280,
@@ -59,6 +70,11 @@ DEFAULTS: Dict[str, Any] = {
             "segmentation": True,
             "max_particles": 1600,
             "glow_scale": 0.5,
+            "bloom": "dual",
+            "warps": True,
+            "max_warps": 8,
+            "aberration": True,
+            "warp_grid": 4,
         },
     },
     "effects": {
@@ -166,9 +182,42 @@ DEFAULTS: Dict[str, Any] = {
             "cooldown": 1.2,
             "release_name": "SENBONZAKURA KAGEYOSHI",
         },
+        # --- Jujutsu Kaisen mode (timings in seconds; colours BGR) ---------
+        "blue": {"charge": 0.35, "active": 1.4, "impact": 0.4, "cooldown": 1.5, "size": 1.0, "intensity": 1.0,
+                 "color": [255, 150, 40], "core_color": [255, 235, 200],
+                 "warp": 1.0, "particles": 1.0, "shake": 1.0, "flash": 1.0},
+        "red": {"charge": 0.3, "active": 0.5, "impact": 0.6, "cooldown": 1.5, "size": 1.0, "intensity": 1.0,
+                "color": [40, 40, 255], "core_color": [220, 225, 255],
+                "warp": 1.0, "particles": 1.0, "shake": 1.0, "flash": 1.0},
+        "hollow_purple": {"charge": 1.4, "active": 1.0, "impact": 0.7, "cooldown": 4.0, "size": 1.0,
+                          "intensity": 1.0, "speed": 1.0, "color": [255, 60, 170], "core_color": [255, 235, 250],
+                          "warp": 1.0, "particles": 1.0, "shake": 1.0, "flash": 1.0},
+        "black_flash": {"charge": 0.12, "active": 0.25, "impact": 0.45, "cooldown": 1.2, "size": 1.0,
+                        "intensity": 1.0, "color": [30, 20, 230], "core_color": [10, 5, 10],
+                        "warp": 1.0, "particles": 1.0, "shake": 1.0, "flash": 1.0},
+        "unlimited_void": {"charge": 1.2, "active": 8.0, "impact": 1.0, "cooldown": 4.0, "intensity": 1.0,
+                           "star_count": 900, "stream_count": 28, "speed": 1.0, "aberration": 3.5,
+                           "warps": True, "flash": 0.85, "title_duration": 3.0, "seed": 7},
+        "malevolent_shrine": {"charge": 1.4, "active": 8.0, "impact": 1.1, "cooldown": 4.0, "intensity": 1.0,
+                              "slash_density": 1.0, "slash_rate": 9.0, "slash_warp": True, "parallax": 0.06,
+                              "seed": 7},
         "aura": {
             "color": [255, 190, 110],
             "intensity": 1.0,
+        },
+    },
+    # Anime modes (see bleach_ar/modes.py). Bleach uses "keys" /
+    # "gestures.bindings" above; other modes have their own ability keys
+    # and gesture bindings here.
+    "modes": {
+        # "" shows the mode selector at startup; "bleach" / "jjk" skips it.
+        "start": "",
+        "jjk": {
+            "keys": {"blue": "1", "red": "2", "hollow_purple": "3", "black_flash": "4",
+                     "unlimited_void": "z", "malevolent_shrine": "x"},
+            "gestures": {"black_flash": "swing", "hollow_purple": "open_palm",
+                         "unlimited_void": "two_fingers", "malevolent_shrine": "both_palms_up"},
+            "aura_color": [255, 110, 150],
         },
     },
     # Optional image assets. Leave empty to use the procedural versions.
@@ -205,6 +254,7 @@ DEFAULTS: Dict[str, Any] = {
         "fullscreen": "f",
         "next_camera": "v",
         "cycle_bankai": "b",
+        "menu": "tab",
         "exit": "escape",
     },
 }

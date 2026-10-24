@@ -7,7 +7,7 @@ import os
 import statistics
 import time
 from collections import deque
-from typing import Optional
+from typing import Dict, Optional
 
 import cv2
 import numpy as np
@@ -17,6 +17,7 @@ from .camera import Camera, CameraError, resolve_camera
 from .config import Config
 from .fx import Canvas, ParticleSystem, Shaker
 from .gestures import GestureRecognizer
+from .modes import BLEACH, MODE_ORDER, MODES
 from .synthetic import make_frame
 from .tracking import AsyncTracker
 
@@ -101,36 +102,54 @@ class Stats:
 
 
 class DemoDirector:
-    """Scripted synthetic person + ability timeline (``--demo``)."""
+    """Scripted synthetic person + ability timeline (``--demo``), per mode."""
 
-    TIMELINE = [(1.0, "getsuga"), (3.0, "shikai"), (5.5, "getsuga"), (7.5, "cero"),
-                (10.5, "bankai"), (15.5, "getsuga"), (17.5, "bankai"), (19.0, "shikai")]
-    LOOP = 21.0
+    TIMELINES = {
+        "bleach": ([(1.0, "getsuga"), (3.0, "shikai"), (5.5, "getsuga"), (7.5, "cero"),
+                    (10.5, "bankai"), (15.5, "getsuga"), (17.5, "bankai"), (19.0, "shikai")], 21.0,
+                   ((7.0, 9.5, "open_palm"),)),
+        "jjk": ([(1.0, "blue"), (3.2, "red"), (5.4, "hollow_purple"), (9.0, "black_flash"),
+                 (10.5, "unlimited_void"), (22.0, "malevolent_shrine")], 34.0,
+                ((0.5, 9.0, "open_palm"),)),
+    }
 
-    def __init__(self):
+    def __init__(self, mode: str = "bleach"):
         self.t0 = time.perf_counter()
         self.fired = set()
         self.loop = 0
+        self.set_mode(mode)
+
+    def set_mode(self, mode: str) -> None:
+        self.timeline, self.loop_len, self.palm = self.TIMELINES.get(mode, self.TIMELINES["bleach"])
+        self.t0 = time.perf_counter()
+        self.fired, self.loop = set(), 0
 
     def step(self, w: int, h: int):
         from .synthetic import make_tracking
 
         t = time.perf_counter() - self.t0
-        loop, lt = divmod(t, self.LOOP)
+        loop, lt = divmod(t, self.loop_len)
         if loop != self.loop:
             self.loop, self.fired = loop, set()
-        gesture = "open_palm" if 7.0 <= lt < 9.5 else "fist"
+        gesture = next((g for a, b, g in self.palm if a <= lt < b), "fist")
         swing = 0.5 + 0.5 * math.sin(lt * 2.2)
-        st = make_tracking(w, h, t=lt, gesture=gesture, swing=swing)
-        due = [name for at, name in self.TIMELINE if lt >= at and (at, name) not in self.fired]
-        for at, name in self.TIMELINE:
+        st = make_tracking(w, h, t=lt, gesture=gesture, swing=swing,
+                           second_hand="open_palm" if gesture == "open_palm" else None)
+        due = [name for at, name in self.timeline if lt >= at and (at, name) not in self.fired]
+        for at, name in self.timeline:
             if lt >= at:
                 self.fired.add((at, name))
         return st, due
 
 
 class BleachAR:
-    def __init__(self, cfg: Config, source=None, demo: bool = False, max_frames: int = 0):
+    # Bleach-only common actions (ignored in other modes).
+    BLEACH_ONLY = {"getsuga", "shikai", "bankai", "cero", "toggle_sword", "toggle_mask", "cycle_weapon",
+                   "cycle_bankai", "toggle_sword_mode"}
+    TOGGLE_ACTIONS = {"toggle_sword": "sword", "toggle_aura": "aura", "toggle_eyes": "eyes", "toggle_mask": "mask"}
+
+    def __init__(self, cfg: Config, source=None, demo: bool = False, max_frames: int = 0,
+                 mode: Optional[str] = None):
         import pygame
 
         self.pg = pygame
@@ -166,6 +185,7 @@ class BleachAR:
         preset = cfg.preset
         eff = cfg["effects"]
         self.canvas = Canvas(preset["glow_scale"], eff["intensity"])
+        self.canvas.quality = preset  # bloom / warps / aberration limits per quality preset
         self.shaker = Shaker()
         self.shaker.enabled = eff["screen_shake"]
         self.ctx = Context(cfg=cfg.data, canvas=self.canvas, particles=ParticleSystem(preset["max_particles"]),
@@ -178,7 +198,14 @@ class BleachAR:
         self.ctx.bankai_style = style if style in BANKAI_STYLES else BANKAI_STYLES[0]
         self.manager = AbilityManager(self.ctx)
         self.gestures = GestureRecognizer(cfg["gestures"])
-        self.director = DemoDirector() if demo else None
+        from .menus import Menus
+        self.menus = Menus(self.hud.fonts)
+        start = mode or cfg.data.get("modes", {}).get("start") or ""
+        self.start_mode = start if start in MODES else None
+        self.director = DemoDirector(self.start_mode or BLEACH) if demo else None
+        self._last_surface = None  # last camera frame as a pygame Surface (menu backdrop)
+        self._trans_p = 1.0  # menus.draw_transition progress; 0.5 = fully covered, 1 = done
+        self.set_mode(self.start_mode or BLEACH)
 
     # --- setup -------------------------------------------------------------
     def _start_pipeline(self) -> Optional[str]:
@@ -226,45 +253,176 @@ class BleachAR:
             smoothing=tr["smoothing"], hold_seconds=tr["hold_seconds"])
         self.tracker = AsyncTracker(tracker) if tr["async"] else tracker
 
-    def startup_screen(self) -> bool:
+    # --- modes ---------------------------------------------------------------
+    def mode_keys(self, mode_id: str) -> Dict[str, str]:
+        """ability id -> key name for a mode."""
+        if mode_id == BLEACH:
+            return {a.id: self.cfg["keys"].get(a.key_action, "") for a in MODES[BLEACH].abilities}
+        keys = self.cfg.data.get("modes", {}).get(mode_id, {}).get("keys", {})
+        return {a.id: keys.get(a.key_action, "") for a in MODES[mode_id].abilities}
+
+    def mode_gestures(self, mode_id: str) -> Dict[str, str]:
+        if mode_id == BLEACH:
+            return dict(self.cfg["gestures"]["bindings"])
+        return dict(self.cfg.data.get("modes", {}).get(mode_id, {}).get("gestures", {}))
+
+    def set_mode(self, mode_id: str) -> None:
+        """Switch universe: abilities, keys and gestures; camera/tracking are kept."""
         pg = self.pg
-        error, t0 = "", time.perf_counter()
-        auto = self.max_frames > 0  # headless test runs skip the prompt
+        self.manager.set_mode(mode_id)
+        self.ability_keymap = {}
+        for aid, key in self.mode_keys(mode_id).items():
+            try:
+                self.ability_keymap[pg.key.key_code(key)] = aid
+            except ValueError:
+                print(f"[config] unknown key '{key}' for '{aid}', ignoring.")
+        self.gestures.cfg = dict(self.cfg["gestures"], bindings=self.mode_gestures(mode_id))
+        self.gestures.reset()
+        if self.director is not None:
+            self.director.set_mode(mode_id)
+
+    def _menu_loop(self, in_game: bool) -> bool:
+        """Mode selector, then that mode's ability panel. Returns False to quit."""
+        pg = self.pg
+        t0 = time.perf_counter()
+        screen = "modes"
+        sel_mode = MODE_ORDER.index(self.ctx.mode) if self.ctx.mode in MODE_ORDER else 0
+        sel_ab = 0
+        error, message = "", ""
         while True:
+            t = time.perf_counter() - t0
+            size = self.screen.get_size()
+            mode_id = MODE_ORDER[sel_mode]
+            go = None
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     return False
+                if event.type == pg.MOUSEMOTION or event.type == pg.MOUSEBUTTONDOWN:
+                    rects = self.menus.mode_card_rects(size) if screen == "modes" else \
+                        self.menus.ability_row_rects(size, mode_id)
+                    for i, r in enumerate(rects):
+                        if r.collidepoint(event.pos):
+                            if screen == "modes":
+                                sel_mode = i
+                                if event.type == pg.MOUSEBUTTONDOWN:
+                                    go = "enter"
+                            else:
+                                sel_ab = i
                 if event.type == pg.KEYDOWN:
-                    if event.key == pg.K_ESCAPE:
-                        return False
-                    if event.key in (pg.K_SPACE, pg.K_RETURN, pg.K_KP_ENTER):
-                        auto = True
-            if auto:
-                self.hud.draw_startup(self.screen, time.perf_counter() - t0, "Opening camera and loading models...")
-                pg.display.flip()
-                error = self._start_pipeline() or ""
-                if not error:
+                    k = event.key
+                    if k == pg.K_ESCAPE:
+                        go = "back"
+                    elif k in (pg.K_RETURN, pg.K_KP_ENTER, pg.K_SPACE):
+                        go = "enter"
+                    elif k in (pg.K_LEFT, pg.K_a) and screen == "modes":
+                        sel_mode = (sel_mode - 1) % len(MODE_ORDER)
+                    elif k in (pg.K_RIGHT, pg.K_d) and screen == "modes":
+                        sel_mode = (sel_mode + 1) % len(MODE_ORDER)
+                    elif k in (pg.K_UP, pg.K_w) and screen == "abilities":
+                        sel_ab = max(0, sel_ab - 1)
+                    elif k in (pg.K_DOWN, pg.K_s) and screen == "abilities":
+                        sel_ab = min(len(MODES[mode_id].abilities) - 1, sel_ab + 1)
+                    elif k == pg.K_TAB and in_game and screen == "modes":
+                        return True  # TAB again resumes
+            mode_id = MODE_ORDER[sel_mode]
+            if go == "back":
+                if screen == "abilities":
+                    screen = "modes"
+                elif in_game:
                     return True
-                print(error)
-                auto = False
-                if self.max_frames:
+                else:
                     return False
-            self.hud.draw_startup(self.screen, time.perf_counter() - t0, error=error)
+            elif go == "enter":
+                if screen == "modes":
+                    screen, sel_ab, error = "abilities", 0, ""
+                else:
+                    if mode_id != self.ctx.mode or not in_game:
+                        self.set_mode(mode_id)
+                    if self.camera is None:
+                        self.menus.warm(self.screen.get_size())
+                        message = "Opening camera and loading models..."
+                        self.menus.draw_ability_panel(self.screen, t, mode_id, self._key_labels(mode_id),
+                                                      sel_ab, self._last_surface, message, self._gesture_hints(mode_id))
+                        pg.display.flip()
+                        error = self._start_pipeline() or ""
+                        message = ""
+                        if error:
+                            print(error)
+                            screen = "modes"
+                            continue
+                    self._close_transition(mode_id, screen, sel_ab, t)
+                    return True
+            if screen == "modes":
+                self.menus.draw_mode_select(self.screen, t, sel_mode, self._last_surface, message, error)
+            else:
+                footer = "ENTER: resume  ESC: back to modes" if in_game else "ENTER: play  ESC: back"
+                self.menus.draw_ability_panel(self.screen, t, mode_id, self._key_labels(mode_id), sel_ab,
+                                              self._last_surface, footer, self._gesture_hints(mode_id))
             pg.display.flip()
-            self.clock.tick(30)
+            self.clock.tick(60)
+
+    def _close_transition(self, mode_id: str, screen: str, sel_ab: int, t: float) -> None:
+        """First half of the menu -> camera wipe, drawn over the ability panel."""
+        if self.max_frames:
+            return
+        start = time.perf_counter()
+        while True:
+            p = min(0.5, (time.perf_counter() - start) / 0.5)
+            self.menus.draw_ability_panel(self.screen, t, mode_id, self._key_labels(mode_id), sel_ab,
+                                          self._last_surface, "", self._gesture_hints(mode_id))
+            self.menus.draw_transition(self.screen, p, mode_id)
+            self.pg.display.flip()
+            for event in self.pg.event.get():  # swallow keys pressed during the wipe
+                if event.type == self.pg.QUIT:
+                    self.running = False
+            if p >= 0.5:
+                break
+            self.clock.tick(60)
+        self._trans_p = 0.5
+
+    def _key_labels(self, mode_id: str) -> Dict[str, str]:
+        return {aid: ("ESC" if k == "escape" else k.upper()) for aid, k in self.mode_keys(mode_id).items()}
+
+    def _gesture_hints(self, mode_id: str) -> Dict[str, str]:
+        names = {"swing": "fast fist swing", "open_palm": "hold open palm", "two_fingers": "hold two fingers up",
+                 "both_palms_up": "both palms above shoulders", "point": "hold index finger up", "fist": "hold fist"}
+        return {aid: names.get(g, g) for aid, g in self.mode_gestures(mode_id).items()}
+
+    def startup(self) -> bool:
+        """Menus at launch (skipped for headless runs or when a start mode is set)."""
+        if self.max_frames > 0 or self.start_mode:
+            error = self._start_pipeline()
+            if error:
+                print(error)
+                return False
+            return True
+        return self._menu_loop(in_game=False)
 
     # --- input -------------------------------------------------------------
     def _handle_key(self, event) -> None:
         pg, ctx = self.pg, self.ctx
         if self.hud.show_calibration and self._handle_calibration_key(event):
             return
+        aid = self.ability_keymap.get(event.key)
+        if aid is not None:
+            self.manager.trigger(aid)
+            return
         action = self.keymap.get(event.key)
         if action is None:
             return
+        if ctx.mode != BLEACH and action in self.BLEACH_ONLY:
+            return
+        toggle = self.TOGGLE_ACTIONS.get(action)
+        if toggle and toggle not in self.manager.mode.toggles:
+            return
+        if action == "menu":
+            if not self._menu_loop(in_game=True):
+                self.running = False
+            # Holds measured with the wall clock would complete across the paused menu.
+            self.gestures.reset()
+            return
         if action == "exit":
             self.running = False
-        elif action in ("getsuga", "shikai", "bankai", "cero"):
-            self.manager.trigger(action)
         elif action == "toggle_sword":
             ctx.show_sword = not ctx.show_sword
         elif action == "toggle_aura":
@@ -374,6 +532,7 @@ class BleachAR:
     def _apply_quality(self, name: str) -> None:
         preset = self.cfg.preset
         self.canvas.glow_scale = preset["glow_scale"]
+        self.canvas.quality = preset
         self.ctx.particles.resize(preset["max_particles"])
         if self.tracker is not None:
             self._make_tracker()
@@ -403,7 +562,7 @@ class BleachAR:
     def run(self) -> None:
         pg = self.pg
         try:
-            if not self.startup_screen():
+            if not self.startup():
                 return
             last = time.perf_counter()
             last_id = -1
@@ -498,11 +657,15 @@ class BleachAR:
         ox, oy = self.shaker.update(self.ctx.dt)
         self.screen.fill((0, 0, 0))
         self.screen.blit(surf, ((W - size[0]) // 2 + ox, (H - size[1]) // 2 + oy))
+        self._last_surface = surf  # menu backdrop when TAB opens the menu
         stats = self.stats.snapshot()
         stats["camera_lost"] = camera_lost and not self.demo
         g = self.cfg["gestures"]
-        self.hud.draw(self.screen, self.ctx, self.manager.abilities, stats, gf, self.gestures.enabled,
-                      self.cfg["quality"], g)
+        self.hud.draw(self.screen, self.ctx, self.manager.active_abilities(), stats, gf, self.gestures.enabled,
+                      self.cfg["quality"], g, mode=self.manager.mode, mode_keys=self._key_labels(self.ctx.mode))
+        if self._trans_p < 1.0:  # second half of the menu -> camera wipe
+            self.menus.draw_transition(self.screen, self._trans_p, self.ctx.mode)
+            self._trans_p = min(1.0, self._trans_p + self.ctx.dt / 0.5)
         pg.display.flip()
 
     def close(self) -> None:

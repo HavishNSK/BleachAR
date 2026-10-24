@@ -62,5 +62,32 @@ class TestSummonIsTimeBased(unittest.TestCase):
         self.assertLessEqual(abs(n60 / 60 - n30 / 30), 1 / 30 + 1e-6)
 
 
+
+class TestMultiModeRegressions(unittest.TestCase):
+    def test_resolution_change_mid_domain(self):
+        from tests.test_integration import DT
+        from bleach_ar.synthetic import make_frame
+        for dom in ("malevolent_shrine", "unlimited_void"):
+            h = Harness()
+            h.mgr.set_mode("jjk")
+            self.assertTrue(h.mgr.trigger(dom))
+            for i in range(80):
+                w, hh = (960, 540) if i < 40 else (640, 360)
+                h.t += DT
+                st = make_tracking(w, hh, t=h.t)
+                h.ctx.tracking = st
+                h.ctx.now, h.ctx.dt = h.t, DT
+                h.mgr.update()
+                h.ctx.canvas.begin(make_frame(st))
+                h.mgr.render()
+                h.ctx.canvas.composite()
+
+    def test_reset_clears_screen_shake(self):
+        h = Harness()
+        h.ctx.shaker.kick(30)
+        h.mgr.set_mode("jjk")
+        self.assertEqual(h.ctx.shaker.amount, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
