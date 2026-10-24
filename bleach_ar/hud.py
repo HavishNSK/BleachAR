@@ -14,8 +14,11 @@ WHITE = (240, 240, 245)
 DIM = (150, 155, 170)
 PANEL = (10, 12, 20, 170)
 ACCENT = (110, 190, 255)  # RGB (pygame), soul-reaper blue
+SENBON_PINK = (255, 140, 200)  # RGB
 LEVEL_COLORS = {"sealed": (200, 205, 215), SHIKAI: (120, 200, 255), BANKAI: (235, 60, 70)}
 
+BANKAI_STYLE_NAMES = {"senbonzakura": "Senbonzakura", "tensa": "Tensa"}
+BANKAI_STYLE_SHORT = {"senbonzakura": "Senbon", "tensa": "Tensa"}
 ABILITY_ROWS = [("getsuga", "Getsuga Tensho"), ("shikai", "Shikai"), ("bankai", "Bankai"), ("cero", "Cero")]
 
 
@@ -98,17 +101,25 @@ class HUD:
         self._panel(surf, rect)
         level = ctx.level
         self._text(surf, "BLEACH AR", self.fonts.bold, ACCENT, (x + 14, y + 10))
-        self._text(surf, level.upper(), self.fonts.bold, LEVEL_COLORS.get(level, WHITE),
+        level_color = SENBON_PINK if (level == BANKAI and ctx.bankai_style == "senbonzakura") \
+            else LEVEL_COLORS.get(level, WHITE)
+        self._text(surf, level.upper(), self.fonts.bold, level_color,
                    (x + w - 14, y + 10), anchor="topright")
         yy = y + 44
         held = gesture_frame.held if gesture_frame else {}
+        senbon = ctx.level == BANKAI and ctx.bankai_style == "senbonzakura"
         for name, label in ABILITY_ROWS:
             ab = abilities[name]
             key = self.key_label(name)
+            if name == "getsuga" and senbon and "senbon_attack" in abilities:
+                # The Getsuga key / swing commands the blade swarm in this Bankai.
+                ab, label = abilities["senbon_attack"], "Senbonzakura"
+            elif name == "bankai":
+                label = "Bankai: " + BANKAI_STYLE_SHORT.get(ctx.bankai_style, ctx.bankai_style)
             pygame.draw.rect(surf, (40, 50, 70), (x + 12, yy, 26, 26), border_radius=6)
             self._text(surf, key, self.fonts.bold, WHITE, (x + 25, yy + 13), anchor="center", shadow=False)
             self._text(surf, label, self.fonts.body, WHITE, (x + 48, yy + 2))
-            state, color, frac = self._ability_state(ab, ctx, name)
+            state, color, frac = self._ability_state(ab, ctx, ab.name if name == "getsuga" else name)
             self._text(surf, state, self.fonts.small, color, (x + w - 14, yy + 4), anchor="topright")
             bar = pygame.Rect(x + 48, yy + 28, w - 62, 5)
             pygame.draw.rect(surf, (45, 50, 65), bar, border_radius=3)
@@ -136,7 +147,7 @@ class HUD:
             if name == "shikai" and ctx.level == SHIKAI:
                 return "ACTIVE - press to seal", LEVEL_COLORS[SHIKAI], 1.0
             if name == "bankai" and ctx.level == BANKAI:
-                return "ACTIVE - press to release", LEVEL_COLORS[BANKAI], 1.0
+                return "ACTIVE", LEVEL_COLORS[BANKAI], 1.0
             if name == "shikai" and ctx.level == BANKAI:
                 return "in Bankai", DIM, 0.0
             return "READY", (120, 230, 150), 1.0
@@ -146,7 +157,7 @@ class HUD:
         return ab.phase.value, (255, 230, 120), ab.progress
 
     def _draw_status(self, surf, ctx: Context, stats: dict, gestures_enabled: bool, quality: str, W: int) -> None:
-        w, h = 236, 128
+        w, h = 280, 148
         rect = pygame.Rect(W - w - 14, 14, w, h)
         self._panel(surf, rect)
         x, y = rect.x + 14, rect.y + 10
@@ -167,7 +178,12 @@ class HUD:
         self._text(surf, f"Gestures {g}  ({self.key_label('toggle_gestures')})", self.fonts.small,
                    WHITE if gestures_enabled else DIM, (x, y + 76))
         mode = "hand-only" if ctx.sword_mode == "hand" else ctx.current_weapon()
+        if ctx.level == BANKAI and ctx.bankai_style == "senbonzakura":
+            mode = "blade swarm"
         self._text(surf, f"Weapon: {mode}  Eyes: {ctx.eye_style}", self.fonts.small, DIM, (x, y + 96))
+        style = BANKAI_STYLE_NAMES.get(ctx.bankai_style, ctx.bankai_style)
+        self._text(surf, f"Bankai style: {style}  ({self.key_label('cycle_bankai')})", self.fonts.small, DIM,
+                   (x, y + 116))
 
     def _draw_titles(self, surf, ctx: Context, W: int, H: int) -> None:
         for t in ctx.titles:
@@ -177,6 +193,8 @@ class HUD:
             scale = 1.0 + 0.25 * math.exp(-age * 10)
             color = bgr_to_rgb(t.color)
             img = self.fonts.title.render(t.text, True, color)
+            # Long names (e.g. "SENBONZAKURA KAGEYOSHI") shrink to fit the window.
+            scale *= min(1.0, W * 0.9 / max(1, img.get_width() * 1.25))
             if scale != 1.0:
                 img = pygame.transform.smoothscale(img, (int(img.get_width() * scale), int(img.get_height() * scale)))
             glow = self.fonts.title.render(t.text, True, (255, 255, 255))
@@ -207,7 +225,7 @@ class HUD:
 
     def _draw_help(self, surf, W: int, H: int) -> None:
         rows = [
-            ("getsuga", "Getsuga Tensho (or swing the sword fast)"),
+            ("getsuga", "Getsuga Tensho (or swing fast); in Senbonzakura: blade attack"),
             ("shikai", "Shikai on/off (or hold two fingers up)"),
             ("bankai", "Bankai on/off (or hold both palms up above shoulders)"),
             ("cero", "Cero (or hold an open palm)"),
@@ -217,6 +235,7 @@ class HUD:
             ("toggle_mask", "Toggle mask"),
             ("cycle_eye_style", "Cycle eye style"),
             ("cycle_weapon", "Cycle sealed weapon style"),
+            ("cycle_bankai", "Bankai style Senbonzakura / Tensa (not during Bankai)"),
             ("toggle_sword_mode", "Sword / hand-only mode"),
             ("toggle_gestures", "Gestures on/off"),
             ("toggle_calibration", "Gesture calibration panel"),

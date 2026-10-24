@@ -7,9 +7,10 @@ blinking hides the glow. Fast head motion leaves short light streaks.
 
 Mask: an original bone-mask design built in a face-local frame defined by
 the two irises and the chin, so it follows head tilt and scale. An optional
-RGBA image (``assets.mask_image``) replaces the procedural mask; it must be
+RGBA image (``assets.mask_image``, by default the bundled ``assets/mask.png``
+made by ``tools/make_assets.py``) replaces the procedural mask; it must be
 front-facing with the eyes at (0.32, 0.42) and (0.68, 0.42) and the chin at
-(0.5, 0.95) of the image size.
+(0.5, 0.95) of the image size. Set it to "" for the procedural mask.
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ _EYES = ((468, (469, 470, 471, 472), 159, 145, 133, 33, EYE_A),
 BONE = np.array([200, 222, 232], np.float32)  # warm off-white (BGR)
 CRIMSON = (40, 25, 175)
 HOLE = (14, 10, 12)
+
+_WARNED: set = set()
 
 # Reference points of an optional mask image, as fractions of its size.
 _IMG_REF = np.array([[0.32, 0.42], [0.68, 0.42], [0.5, 0.95]], np.float32)
@@ -89,8 +92,10 @@ class EyeEffects:
             path = raw if os.path.isabs(raw) else os.path.join(PROJECT_ROOT, raw)
             img = cv2.imread(path, cv2.IMREAD_UNCHANGED) if os.path.exists(path) else None
             if img is None or img.ndim != 3 or img.shape[2] != 4:
-                print(f"[assets] mask_image '{path}' is missing or not an RGBA image; "
-                      "using the procedural mask.")
+                msg = f"[assets] mask_image '{path}' is missing or not an RGBA image; using the procedural mask."
+                if msg not in _WARNED:  # one warning per path, however many effects are built
+                    _WARNED.add(msg)
+                    print(msg)
             else:
                 self.mask_img = img
 
@@ -122,6 +127,8 @@ class EyeEffects:
             return
         face = ctx.tracking.face
         if not face.ok or face.points.shape[0] < 478 or ctx.canvas.frame is None:
+            return
+        if not np.isfinite(face.points[:, :2]).all():
             return
         alpha = float(np.clip(face.confidence, 0.0, 1.0))
         if alpha <= 0.01:
@@ -294,7 +301,13 @@ class EyeEffects:
         rh, rw = roi.shape[:2]
         warped = cv2.warpAffine(img, m, (rw, rh), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                                 borderValue=(0, 0, 0, 0))
-        self._blend(roi, warped[:, :, :3], warped[:, :, 3], alpha)
+        # Sit the art in the scene's lighting: scale by the face region's brightness.
+        lum = float(np.mean(roi[rh // 4: rh - rh // 4, rw // 4: rw - rw // 4])) / 255.0 if rh > 4 and rw > 4 else 0.5
+        col = warped[:, :, :3]
+        k = float(np.clip(0.72 + 0.6 * lum, 0.75, 1.05))
+        if abs(k - 1.0) > 0.01:
+            col = cv2.convertScaleAbs(col, alpha=k)
+        self._blend(roi, col, warped[:, :, 3], alpha)
 
     def _image_affine(self, aff: np.ndarray) -> np.ndarray:
         """2x3 affine from mask-image pixels to render pixels."""

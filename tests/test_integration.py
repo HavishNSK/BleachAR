@@ -54,8 +54,10 @@ class TestAbilities(unittest.TestCase):
     def test_every_ability_full_cycle_each_level(self):
         for level in (SEALED, SHIKAI, BANKAI):
             for name in ("getsuga", "cero"):
+                # Use tensa Bankai so Getsuga is not routed to Senbonzakura.
                 h = Harness(show_eyes=True, show_mask=True)
                 h.ctx.level = level
+                h.ctx.bankai_style = "tensa"
                 self.assertTrue(h.mgr.trigger(name), f"{name} at {level}")
                 h.run_until_idle(name)
                 self.assertEqual(h.ctx.level, level)
@@ -75,8 +77,10 @@ class TestAbilities(unittest.TestCase):
         self.assertEqual(h.ctx.level, BANKAI)
         self.assertIsNone(h.ctx.locked_by)
         self.assertFalse(h.mgr.trigger("shikai"), "shikai key does nothing in bankai")
+        # Default Bankai style is senbonzakura: the Getsuga key commands the blade swarm.
         self.assertTrue(h.mgr.trigger("getsuga"))
-        h.run_until_idle("getsuga")
+        self.assertEqual(h.mgr.abilities["senbon_attack"].phase, Phase.CHARGING)
+        h.run_until_idle("senbon_attack")
         self.assertTrue(h.mgr.trigger("bankai"), "pressing bankai again releases it")
         h.run_until_idle("bankai")
         self.assertEqual(h.ctx.level, SEALED)
@@ -93,9 +97,11 @@ class TestAbilities(unittest.TestCase):
         h = Harness()
         h.mgr.trigger("bankai")
         h.step(n=10)
+        h.ctx.sword_sink = 0.85
         h.mgr.reset()
         self.assertEqual(h.ctx.level, SEALED)
         self.assertIsNone(h.ctx.locked_by)
+        self.assertEqual(h.ctx.sword_sink, 0.0)
         self.assertTrue(all(a.phase == Phase.IDLE for a in h.mgr.abilities.values()))
         h.step(n=3)
 

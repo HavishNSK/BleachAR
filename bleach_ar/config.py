@@ -123,6 +123,8 @@ DEFAULTS: Dict[str, Any] = {
             "color": [255, 200, 90],
         },
         "bankai": {
+            # "senbonzakura" (pink blade swarm) or "tensa" (crimson black blade).
+            "style": "senbonzakura",
             "dim": 0.6,
             "charge": 1.6,
             "release": 0.5,
@@ -143,6 +145,23 @@ DEFAULTS: Dict[str, Any] = {
             "color": [60, 40, 255],
             "core_color": [235, 235, 255],
         },
+        "senbonzakura": {
+            # Swarm of small glowing blades orbiting the user during Bankai.
+            "count": 160,
+            "orbit_radius": 0.30,  # fraction of frame diagonal at full size
+            "orbit_speed": 1.0,
+            "blade_size": 1.0,
+            "intensity": 1.0,
+            "color": [190, 120, 255],  # pink (BGR)
+            "accent_color": [235, 80, 255],  # magenta
+            "core_color": [250, 235, 255],
+            # Commanded attack (Getsuga key / swing while in this Bankai).
+            "charge": 0.35,
+            "active": 1.1,
+            "impact": 0.45,
+            "cooldown": 1.2,
+            "release_name": "SENBONZAKURA KAGEYOSHI",
+        },
         "aura": {
             "color": [255, 190, 110],
             "intensity": 1.0,
@@ -153,7 +172,12 @@ DEFAULTS: Dict[str, Any] = {
     # Mask PNG: RGBA, front-facing, eyes on a horizontal line.
     "assets": {
         "sword_image": "",
-        "mask_image": "",
+        # Per-style sword art (RGBA, blade up, grip at bottom centre). Empty =
+        # procedural (sword_image, then the built-in shapes). Regenerate the
+        # bundled art with: python tools/make_assets.py
+        "sword_images": {"katana": "assets/sword_katana.png", "cleaver": "assets/sword_cleaver.png",
+                         "dark": "assets/sword_dark.png"},
+        "mask_image": "assets/mask.png",
         "font": "",
     },
     "keys": {
@@ -176,6 +200,7 @@ DEFAULTS: Dict[str, Any] = {
         "help": "h",
         "fullscreen": "f",
         "next_camera": "v",
+        "cycle_bankai": "b",
         "exit": "escape",
     },
 }

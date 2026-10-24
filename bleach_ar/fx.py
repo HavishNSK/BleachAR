@@ -179,10 +179,21 @@ class ParticleSystem:
         if n <= 0:
             return
         n = min(n, self.capacity)
+        pos_arr = np.asarray(pos, np.float32)
+        vel_arr = np.asarray(vel, np.float32)
+        # Per-particle arrays may be sized for the unclamped n; truncate to match.
+        if pos_arr.ndim == 2:
+            n = min(n, int(pos_arr.shape[0]))
+            pos_arr = pos_arr[:n]
+        if vel_arr.ndim == 2:
+            n = min(n, int(vel_arr.shape[0]))
+            vel_arr = vel_arr[:n]
+        if n <= 0:
+            return
         idx = (self._cursor + np.arange(n)) % self.capacity  # ring buffer; oldest are overwritten
         self._cursor = int((self._cursor + n) % self.capacity)
-        p = np.broadcast_to(np.asarray(pos, np.float32), (n, 2))
-        v = np.broadcast_to(np.asarray(vel, np.float32), (n, 2))
+        p = np.broadcast_to(pos_arr, (n, 2))
+        v = np.broadcast_to(vel_arr, (n, 2))
         self.pos[idx] = p + np.random.normal(0, spread_pos, (n, 2)) if spread_pos else p
         self.vel[idx] = v + np.random.normal(0, spread_vel, (n, 2)) if spread_vel else v
         lf = np.random.uniform(life[0], life[1], n).astype(np.float32)

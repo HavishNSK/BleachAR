@@ -66,7 +66,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.cycle_quality(), "low")
 
     def test_missing_asset_falls_back(self):
-        cfg = Config({"assets": {"sword_image": "does/not/exist.png"}})
+        cfg = Config({"assets": {"sword_image": "does/not/exist.png", "mask_image": "does/not/exist_mask.png"}})
         self.assertIsNone(cfg.asset_path("sword_image"))
         self.assertIsNone(cfg.asset_path("mask_image"))
 
@@ -203,6 +203,21 @@ class TestGestures(unittest.TestCase):
         self.assertEqual(gf.per_hand, {})
 
 
+class TestTracking(unittest.TestCase):
+    def test_non_finite_landmarks_are_dropped(self):
+        from bleach_ar.tracking import Part, Tracker
+        t = Tracker.__new__(Tracker)  # no MediaPipe graph needed for _update_part
+        t.smoothing, t.hold_seconds = 0.45, 0.35
+        part = Part()
+        good = np.ones((21, 3), np.float32)
+        t._update_part(part, good, now=0.0)
+        bad = good.copy()
+        bad[0, 0] = np.inf
+        t._update_part(part, bad, now=0.01)
+        self.assertFalse(part.visible)
+        self.assertTrue(np.isfinite(part.points).all())
+
+
 class TestCamera(unittest.TestCase):
     def test_synthetic_source(self):
         cam = Camera("synthetic", 320, 180).start()
@@ -230,6 +245,18 @@ class TestFx(unittest.TestCase):
         out = c.composite()
         self.assertEqual(out.shape, (270, 480, 3))
         self.assertGreater(int(out.max()), 0)
+
+    def test_emit_clamps_per_particle_arrays(self):
+        """n > capacity with (n, 2) pos/vel must truncate, not ValueError on broadcast."""
+        cap = 20
+        n = 50
+        ps = ParticleSystem(cap)
+        pos = np.linspace(0, 100, n * 2, dtype=np.float32).reshape(n, 2)
+        vel = np.ones((n, 2), np.float32) * (10.0, -5.0)
+        ps.emit(n, pos, vel)
+        self.assertEqual(ps.alive_count, cap)
+        np.testing.assert_allclose(ps.pos[:cap], pos[:cap])
+        np.testing.assert_allclose(ps.vel[:cap], vel[:cap])
 
 
 if __name__ == "__main__":

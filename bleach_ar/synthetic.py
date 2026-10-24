@@ -135,6 +135,10 @@ def make_frame(st: TrackingState) -> np.ndarray:
             cv2.circle(frame, (int(pts[idx, 0]), int(pts[idx, 1])), 6, (40, 30, 30), -1)
     for p in st.hands.values():
         if p.ok:
+            # Solid hand silhouette so finger occlusion over the sword grip
+            # shows a "fist" in demo mode, like a real camera image would.
+            hull = cv2.convexHull(p.points[:, :2].astype(np.int32))
+            cv2.fillConvexPoly(frame, hull, (120, 140, 175), cv2.LINE_AA)
             for a, b in ((0, 5), (0, 17), (5, 9), (9, 13), (13, 17), (5, 8), (9, 12), (13, 16), (17, 20), (1, 4)):
                 cv2.line(frame, tuple(p.points[a, :2].astype(int)), tuple(p.points[b, :2].astype(int)),
                          (140, 160, 190), 6)

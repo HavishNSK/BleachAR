@@ -52,9 +52,10 @@ python -m bleach_ar --demo
 
 | Key | Action |
 |---|---|
-| `1` | **Getsuga Tenshō** |
+| `1` | **Getsuga Tenshō** (in Senbonzakura Bankai: command the blade swarm to attack) |
 | `2` | **Shikai**: release, or press again to seal |
 | `3` | **Bankai**: transformation, or press again to release |
+| `B` | Bankai style: **Senbonzakura** (default) / **Tensa** (crimson). Only while not in Bankai |
 | `4` | **Cero** |
 | `5` | Toggle Zanpakutō |
 | `6` | Toggle reiatsu aura |
@@ -82,7 +83,7 @@ Gestures add to the keyboard; they never replace it. They are rule-based, built 
 | Gesture | Triggers |
 |---|---|
 | Make a **fist**: the sword appears in it | Zanpakutō grip |
-| **Swing** the sword quickly | Getsuga Tenshō |
+| **Swing** the sword quickly | Getsuga Tenshō (Senbonzakura attack while in that Bankai) |
 | Hold an **open palm** (~0.8 s) | Cero (raise your palm to fire at the camera, or point your forearm to fire a beam) |
 | Hold **index + middle finger** up (~0.8 s) | Shikai |
 | Hold **both palms open above your shoulders** (~0.8 s) | Bankai |
@@ -113,11 +114,12 @@ Every timed ability runs through the same state machine: `IDLE → CHARGING → 
 
 | Ability | What you see |
 |---|---|
-| **Zanpakutō** | A procedural blade aligned with your fist. Its direction comes from your knuckle line (a 2D approximation; no 3D tracking is claimed) and is smoothed and length-scaled to your hand. Fast swings leave a slash trail with sparks and an impact flash. Styles: katana, cleaver (Shikai) and dark (Bankai). Hand-only mode replaces the blade with an energy blade around your hand. |
+| **Zanpakutō** | A blade held in your fist. Make a fist to summon it; it stays while the hand remains a fist (a few non-fist frames in a row are needed to dismiss it, so a misread frame doesn't flicker it) and fades in and out. Its direction follows the diagonal of a real grip: your knuckle line tilted toward your forearm (pose elbow to wrist), leaning on the forearm when the fist is seen edge-on. It is a 2D approximation; no 3D tracking is claimed. An adaptive (One-Euro) filter keeps it steady when still without dulling fast swings. Your fingers are drawn over the handle, taken from the camera image. Fast swings leave a slash trail with sparks and an impact flash. Styles: katana, cleaver (Shikai) and dark (Bankai), drawn from the bundled art in `assets/` with an energy edge glow. Hand-only mode replaces the blade with an energy blade around any visible hand. |
 | **Getsuga Tenshō** | Energy gathers on the blade, then a layered crescent (glow, body, white core, afterimages, shed particles) launches in your swing direction. It shrinks while drifting toward a vanishing point so it seems to fly away from you, and ends in a shockwave impact with screen shake. In Bankai it is black with a crimson rim. |
 | **Reiatsu aura** | Flame-like spiritual pressure rising off your silhouette, plus embers, a pulsing rim and a glowing pool where your body meets the bottom of the frame. It uses MediaPipe person segmentation; low quality, or a missing mask, falls back to a silhouette built from pose landmarks. It follows you and fades out if tracking is lost. |
 | **Shikai** | Particles spiral into the sword, the aura flares, then a flash releases the transformed blade with a "SHIKAI — Rise up" title. Press `2` again to seal. |
-| **Bankai** | The screen dims, energy floods into your body as a rising column of light with building shake, then it releases with a white flash, a radial particle burst, shockwave rings and the "BANKAI" title. The sword, aura and energy colors all change. All other abilities are locked while the sequence plays and it cannot retrigger. Press `3` again to release Bankai. |
+| **Bankai (Tensa style)** | The screen dims, energy floods into your body as a rising column of light with building shake, then it releases with a white flash, a radial particle burst, shockwave rings and the "BANKAI" title. The sword, aura and energy colors all change. All other abilities are locked while the sequence plays and it cannot retrigger. Press `3` again to release Bankai. |
+| **Senbonzakura Kageyoshi** (Bankai style, `B`) | Byakuya's Bankai. The screen dims, your sword sinks away, and a forest of glowing pink-white blades rises from the ground around you. One pink-white flash shatters it into a swarm of around 160 tiny luminous blades, and the "SENBONZAKURA KAGEYOSHI" title appears. The swarm then orbits you in tilted rings for as long as Bankai lasts. Blades on the far side are smaller and dimmer and fade behind your silhouette. Blades on the near side are drawn in front of you. The swarm follows your torso and holds its place if tracking drops out. While in this Bankai, `1` or a sword swing commands the swarm: it gathers into a fan behind your hand, streams as a river of blades in the direction you point, bursts with a pink shockwave, then flies back into orbit. Press `3` to release: the blades scatter and fade, and your sword returns. |
 | **Cero** | A crimson orb charges at your open palm, with crackling arcs and converging particles. It then fires a layered beam along your forearm, or, if your palm faces the camera, a screen-filling blast toward the viewer, followed by an impact. |
 | **Eyes and mask** | Glowing irises anchored to MediaPipe's iris landmarks, hidden when you blink, leaving light streaks when you turn quickly. The "hollow" style darkens the whites of the eyes. The optional procedural bone mask follows head position, scale and tilt. Both fade out gracefully when face tracking is lost. |
 
@@ -135,6 +137,8 @@ Defaults live in `bleach_ar/config.py`. To override them, create `config.json` i
   "keys": { "cero": "x" }
 }
 ```
+
+Bankai style and Senbonzakura tuning live under `abilities.bankai.style` (`"senbonzakura"` or `"tensa"`) and `abilities.senbonzakura`. The tunable keys are `count` (blade count at medium quality, scaled by the quality preset and capped at 300), `orbit_radius` (maximum orbit radius as a fraction of the frame diagonal), `orbit_speed`, `blade_size`, `intensity`, the three colours, and the attack timings `charge` / `active` / `impact` / `cooldown`.
 
 To get a complete file to edit, run `python -m bleach_ar --write-config config.json`.
 
@@ -163,15 +167,16 @@ Tracking runs on a worker thread by default (`"tracking": {"async": true}`), so 
 
 ### Optional assets
 
-All effects are procedural, so nothing is required. To use your own art, add these under `assets` in the config:
+The repo ships original sword and mask art in `assets/` (about 210 KB in total), rendered offline by `tools/make_assets.py` with numpy/OpenCV at 4x supersampling. Run `python tools/make_assets.py` to regenerate it. Every effect also has a procedural fallback, so the art is optional. Point these keys under `assets` at your own files to replace it, or set them to `""` to use the procedural versions:
 
 | Key | What to supply |
 |---|---|
-| `sword_image` | RGBA PNG, blade pointing straight up, grip at the bottom centre |
-| `mask_image` | RGBA PNG, front-facing, eyes at (32%, 42%) and (68%, 42%) of the image, chin at (50%, 95%) |
+| `sword_images` | One RGBA PNG per style (`katana`, `cleaver`, `dark`). Blade pointing straight up, square pixels. The image height spans the blade from the pommel end (bottom, 0.2 blade lengths behind the grip) to the tip (top), and the blade axis is the horizontal centre. The grip sits 1/6 of the way up from the bottom. Default: `assets/sword_<style>.png`. |
+| `sword_image` | Legacy single image (same layout) used for any style without its own entry |
+| `mask_image` | RGBA PNG, front-facing, eyes at (32%, 42%) and (68%, 42%) of the image, chin at (50%, 95%). Default: `assets/mask.png` |
 | `font` | A `.ttf` / `.otf` file for the HUD and titles |
 
-A missing or unreadable asset prints one warning and falls back to the procedural version. Hand-painted sword and mask art, plus an anime-style display font, are the assets that would improve the look the most.
+A missing or unreadable asset prints one warning and falls back to the procedural version. Image swords are warped into a small region around the blade each frame (a pre-scaled copy is picked so it is never shrunk much), and they keep the energy edge glow. At 960×540 on an M1 Air, the sword's update and render together take about 0.7 ms procedural and 1.4–1.6 ms with image art, finger occlusion included.
 
 ---
 
@@ -199,7 +204,7 @@ Measured on an **Apple M1 MacBook Air (8 GB)** running Python 3.11. The input wa
 python -m unittest discover -s tests -v
 ```
 
-The 33 tests cover:
+The 94 tests cover:
 - config merging and errors;
 - every state-machine transition, including cooldowns, retrigger blocking and the Bankai lock;
 - gesture classification, debounce, hold, release and re-hold, the global cooldown, and dropped frames;
@@ -228,7 +233,7 @@ The 33 tests cover:
 ## Known limitations
 
 - **No live-webcam testing yet.** Tracking was checked on real photos and video, but nobody has run the app against a live camera. Gesture thresholds and effect brightness may need tuning for your room and lighting.
-- **The sword is a 2D approximation** from hand landmarks. With knuckles facing the camera, the blade points sideways, toward the thumb side. The blade's handle is drawn over your fingers, not behind them.
+- **The sword is a 2D approximation** from hand landmarks. With knuckles facing the camera and your forearm upright, the blade leans diagonally toward the thumb side, as a real grip would, not straight up. When the fist points straight at the camera, the direction is less certain. Finger occlusion uses a mask built from the landmarks, so the handle edge can be off by a few pixels around your fingers.
 - **Hands need the body in view.** Holistic finds hands from the body pose, so close-up hands without a body aren't detected.
 - **Async tracking can lag slightly.** Overlays can trail very fast motion by about one inference (~25 ms). Set `"async": false` to avoid this, at a lower frame rate.
 - **Segmentation is soft.** MediaPipe's segmentation edge is soft, so the aura's mask threshold may need tuning for some backgrounds.
@@ -248,7 +253,7 @@ bleach_ar/
   gestures.py     rule-based hand gestures, debounce, hold, cooldown
   abilities.py    ability state machine, shared per-frame Context, AbilityManager
   fx.py           compositing (additive light + bloom), particles, trails, shake
-  sword.py        Zanpakuto pose estimation, blade rendering, slash trails
+  sword.py        Zanpakuto summon/dismiss, pose + One-Euro filter, blade/image rendering, finger occlusion, sinking
   getsuga.py      Getsuga Tensho
   transform.py    Shikai and Bankai
   cero.py         Cero
@@ -257,6 +262,9 @@ bleach_ar/
   hud.py          HUD, titles, help, calibration, startup screen
   config.py       defaults, presets, key bindings, JSON overrides
   synthetic.py    synthetic person for --demo and tests
+tools/
+  make_assets.py  renders the bundled sword and mask art into assets/
+assets/           original sword (katana, cleaver, dark) and mask PNGs
 tests/            unittest suite
 ```
 

@@ -151,6 +151,8 @@ class Tracker:
         self.state = TrackingState()
 
     def _update_part(self, part: Part, new: Optional[np.ndarray], now: float) -> None:
+        if new is not None and not np.isfinite(new).all():
+            new = None  # treat corrupt landmarks as a dropped frame
         if new is not None:
             if part.points is None or part.points.shape != new.shape or not part.visible:
                 part.points = new

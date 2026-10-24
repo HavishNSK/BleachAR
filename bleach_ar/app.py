@@ -17,10 +17,28 @@ from .camera import Camera, CameraError, resolve_camera
 from .config import Config
 from .fx import Canvas, ParticleSystem, Shaker
 from .gestures import GestureRecognizer
+from .synthetic import make_frame
 from .tracking import AsyncTracker
 
 EYE_STYLES = ["hollow", "red", "blue", "white"]
 WEAPON_STYLES = ["katana", "cleaver", "dark"]
+BANKAI_STYLES = ["senbonzakura", "tensa"]
+BANKAI_STYLE_LABELS = {"senbonzakura": "BANKAI: SENBONZAKURA", "tensa": "BANKAI: TENSA ZANGETSU"}
+
+
+def cycle_bankai_style(ctx: Context, manager: AbilityManager) -> bool:
+    """Switch the Bankai style; refused (returns False) during or while in Bankai."""
+    from .abilities import BANKAI, Phase
+
+    if ctx.level == BANKAI or manager.abilities["bankai"].phase != Phase.IDLE:
+        ctx.show_title("RELEASE BANKAI FIRST", "", (200, 200, 210), 0.9)
+        return False
+    cur = ctx.bankai_style if ctx.bankai_style in BANKAI_STYLES else BANKAI_STYLES[0]
+    ctx.bankai_style = BANKAI_STYLES[(BANKAI_STYLES.index(cur) + 1) % len(BANKAI_STYLES)]
+    ctx.cfg["abilities"]["bankai"]["style"] = ctx.bankai_style  # "S" in calibration saves it
+    color = ctx.cfg["abilities"]["senbonzakura" if ctx.bankai_style == "senbonzakura" else "bankai"]["color"]
+    ctx.show_title(BANKAI_STYLE_LABELS[ctx.bankai_style], "", tuple(color), 1.2)
+    return True
 
 
 class Stats:
@@ -153,6 +171,8 @@ class BleachAR:
         self.ctx.eye_style = eff["eye_style"]
         self.ctx.sword_mode = eff["sword_mode"]
         self.ctx.show_mask = eff["show_mask"]
+        style = cfg["abilities"]["bankai"].get("style", "senbonzakura")
+        self.ctx.bankai_style = style if style in BANKAI_STYLES else BANKAI_STYLES[0]
         self.manager = AbilityManager(self.ctx)
         self.gestures = GestureRecognizer(cfg["gestures"])
         self.director = DemoDirector() if demo else None
@@ -253,6 +273,8 @@ class BleachAR:
         elif action == "cycle_weapon":
             ctx.weapon_style = WEAPON_STYLES[(WEAPON_STYLES.index(ctx.weapon_style) + 1) % len(WEAPON_STYLES)] \
                 if ctx.weapon_style in WEAPON_STYLES else WEAPON_STYLES[0]
+        elif action == "cycle_bankai":
+            self.cycle_bankai_style()
         elif action == "toggle_sword_mode":
             ctx.sword_mode = "hand" if ctx.sword_mode == "sword" else "sword"
         elif action == "toggle_gestures":
@@ -272,6 +294,10 @@ class BleachAR:
             self._next_camera()
         elif action == "fullscreen":
             pg.display.toggle_fullscreen()
+
+    def cycle_bankai_style(self) -> bool:
+        """Toggle Senbonzakura / Tensa. Only while sealed/shikai and Bankai is idle."""
+        return cycle_bankai_style(self.ctx, self.manager)
 
     def _open_other_camera(self, current: int) -> Optional[Camera]:
         """Open the next camera index after ``current`` that delivers frames."""
@@ -389,6 +415,7 @@ class BleachAR:
                         if self.director is not None:
                             st, due = self.director.step(frame.shape[1], frame.shape[0])
                             self.ctx.tracking = st
+                            frame = self._demo_frame = make_frame(st)  # draw the synthetic figure
                             for name in due:
                                 self.manager.trigger(name)
                         elif isinstance(self.tracker, AsyncTracker):
@@ -397,7 +424,7 @@ class BleachAR:
                             self.ctx.tracking = self.tracker.process(frame)
                             track_ms = self.ctx.tracking.inference_ms
                     elif frame is not None:
-                        frame = self._render_frame(raw)
+                        frame = self._demo_frame.copy() if self.director is not None else self._render_frame(raw)
                 if frame is None:
                     frame = np.zeros((540, 960, 3), np.uint8)
                 if isinstance(self.tracker, AsyncTracker):

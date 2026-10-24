@@ -18,6 +18,16 @@ Bankai phase mapping (all seconds from ``cfg['abilities']['bankai']``):
     COOLDOWN = cooldown
 
 ``ctx.locked_by == "bankai"`` from CHARGING until COOLDOWN starts.
+
+Bankai has two styles, chosen from ``ctx.bankai_style`` when it is triggered
+and stored on the instance (a later change can't corrupt a running sequence).
+Both use the same phases, timing and locking; only the visuals branch:
+
+* ``tensa``        - the crimson column, explosion and dark ember ambience.
+* ``senbonzakura`` - dim, the sword sinks (``ctx.sword_sink`` 0 -> 1), a forest
+  of pink-white blades rises from the ground, one modest pink-white flash
+  shatters it into the blade swarm (``ctx.swarm``), which then orbits the user.
+  SEAL disperses the swarm and resurfaces the sword (``sword_sink`` -> 0).
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ from .abilities import BANKAI, SEALED, SHIKAI, Ability, Context, Phase
 from .fx import Canvas, ease_in, ease_out, ipt, jagged_line, perp, ring, scale_color, smoothstep, unit
 
 RELEASE, SEAL = "release", "seal"
+TENSA, SENBON = "tensa", "senbonzakura"
 WHITE = (255, 255, 255)
 
 
@@ -254,6 +265,7 @@ class Bankai(Ability):
         self._ember_life = np.zeros(self.N_EMBERS, np.float32)
         self._ember_size = np.ones(self.N_EMBERS, np.float32)
         self._ambient = 0.0  # 0..1 strength of the persistent effect
+        self.style = TENSA  # set from ctx.bankai_style on every trigger
 
     # --- timing -----------------------------------------------------------
     def _p(self, key: str, default: float) -> float:
@@ -279,6 +291,7 @@ class Bankai(Ability):
         if not self.can_trigger(ctx):
             return False
         self.mode = SEAL if ctx.level == BANKAI else RELEASE
+        self.style = SENBON if ctx.bankai_style == SENBON else TENSA
         self._advance_from(-1, ctx)
         return True
 
@@ -290,6 +303,29 @@ class Bankai(Ability):
         self._ambient = 0.0
         if ctx.locked_by == self.name:
             ctx.locked_by = None
+        ctx.sword_sink = 0.0
+        if ctx.swarm is not None:
+            ctx.swarm.clear()
+
+    def update(self, ctx: Context) -> None:
+        super().update(ctx)
+        self._drive_sword_sink(ctx)
+
+    def _drive_sword_sink(self, ctx: Context) -> None:
+        """``ctx.sword_sink``: 0 = blade drawn normally, 1 = sunk/hidden (Senbonzakura)."""
+        style = self.style if self.phase != Phase.IDLE else ctx.bankai_style
+        if style == SENBON:
+            if self.mode == RELEASE and self.phase == Phase.CHARGING:
+                ct = (self.t - self.dim_time) / max(1e-3, 0.5 * self._p("charge", 1.6))
+                ctx.sword_sink = smoothstep(ct)
+                return
+            if self.mode == SEAL and self.phase == Phase.ACTIVE:
+                ctx.sword_sink = 1.0 - smoothstep(self.progress)
+                return
+            if ctx.level == BANKAI:
+                ctx.sword_sink = 1.0
+                return
+        ctx.sword_sink = max(0.0, ctx.sword_sink - 3.0 * max(0.0, ctx.dt))
 
     def _unlock(self, ctx: Context) -> None:
         if ctx.locked_by == self.name:
@@ -306,6 +342,9 @@ class Bankai(Ability):
             self._unlock(ctx)
             return
         self._track_center(ctx)
+        if self.style == SENBON:
+            self._sb_on_enter(phase, ctx)
+            return
         if self.mode == SEAL:
             if phase == Phase.ACTIVE:
                 ctx.locked_by = self.name
@@ -341,6 +380,9 @@ class Bankai(Ability):
             ctx.shaker.kick(10)
 
     def on_update(self, ctx: Context) -> None:
+        if self.style == SENBON:
+            self._sb_on_update(ctx)
+            return
         color = tuple(self.params["color"])
         d = ctx.diag
         if self.mode == SEAL:
@@ -392,6 +434,9 @@ class Bankai(Ability):
         cv = ctx.canvas
         self._render_ambient(ctx)
         if self.phase in (Phase.IDLE, Phase.COOLDOWN):
+            return
+        if self.style == SENBON:
+            self._sb_render(ctx)
             return
         color = tuple(self.params["color"])
         if self.mode == SEAL:
@@ -487,6 +532,112 @@ class Bankai(Ability):
                 cv2.polylines(cv.light, [pts[:4].astype(np.int32)], False, scale_color(WHITE, s), 1, cv2.LINE_AA)
             cv.glow_circle(c, d * 0.35 * (1 - a) + 30, color, 1.4 * (1 - a))
 
+    # --- Senbonzakura Kageyoshi ------------------------------------------
+    def _sb(self, ctx: Context) -> dict:
+        return ctx.cfg["abilities"]["senbonzakura"]
+
+    def _sb_charge_p(self) -> float:
+        return min(1.0, max(0.0, (self.t - self.dim_time) / max(1e-3, self._p("charge", 1.6))))
+
+    def _sb_on_enter(self, phase: Phase, ctx: Context) -> None:
+        sb = self._sb(ctx)
+        pink = tuple(sb.get("color", (190, 120, 255)))
+        sw = ctx.swarm
+        ctx.locked_by = self.name
+        if self.mode == SEAL:
+            if phase == Phase.ACTIVE:
+                ctx.canvas.flash = max(ctx.canvas.flash, 0.12)
+                ctx.shaker.kick(5)
+                ctx.show_title("BANKAI RELEASED", sub="", color=(225, 200, 240), duration=1.4)
+                if sw is not None:
+                    sw.disperse(ctx)
+            elif phase == Phase.IMPACT:
+                ctx.level = SEALED
+            return
+        if phase == Phase.CHARGING:
+            self._release_t = None
+            if sw is not None:
+                sw.clear()  # pillars start in on_update once the canvas has a size
+        elif phase == Phase.ACTIVE:
+            # The forest of blades shatters into the swarm: one modest pink-white flash.
+            ctx.level = BANKAI
+            ctx.canvas.flash = max(ctx.canvas.flash, 0.4)
+            ctx.shaker.kick(16)
+            self._release_t = ctx.now
+            if sw is not None:
+                sw.pillars.p = 1.0
+                pos, vel = sw.pillars.sample(sw.desired_count(ctx), ctx.diag)
+                if len(pos):
+                    sw.spawn_from(pos, vel)
+                    k = min(len(pos), 140)
+                    ctx.particles.emit(k, pos[:k], vel[:k] * 0.7, life=(0.3, 0.8), size=(1.0, 2.6),
+                                       color=pink, drag=2.4)
+                else:
+                    sw.spawn_orbit(ctx)
+                sw.pillars.shattered = True
+        elif phase == Phase.IMPACT:
+            ctx.show_title(sb.get("release_name", "SENBONZAKURA KAGEYOSHI"), sub="Bankai", color=pink,
+                           duration=max(1.5, self.duration(Phase.IMPACT) + 0.6))
+            ctx.shaker.kick(6)
+
+    def _sb_on_update(self, ctx: Context) -> None:
+        sb = self._sb(ctx)
+        pink = tuple(sb.get("color", (190, 120, 255)))
+        cv, sw = ctx.canvas, ctx.swarm
+        if self.mode == SEAL:
+            return
+        if self.phase == Phase.CHARGING:
+            if self.t < self.dim_time:
+                ctx.aura_boost = max(ctx.aura_boost, 0.5 * self.t / max(1e-3, self.dim_time))
+                return
+            p = self._sb_charge_p()
+            ctx.aura_boost = max(ctx.aura_boost, 0.5 + 1.2 * p)
+            ctx.shaker.kick(1.0 + 4.0 * ease_in(p))
+            if sw is not None and not sw.pillars.on and cv.w > 0:
+                sw.update(ctx)  # refresh the body anchor
+                sw.pillars.start(sw.center, sw.scale, cv.w, cv.h)
+            if sw is not None:
+                sw.pillars.p = max(0.0, (p - 0.22) / 0.78)
+            # Petals shed from the sinking blade, and drift up from the ground.
+            s = ctx.sword
+            if s.visible and s.length > 1.0 and ctx.sword_sink < 0.98:
+                m = int(np.random.poisson(90.0 * max(0.0, ctx.dt)))  # ~90 petals/s at any FPS
+                t = np.random.uniform(0, 1, (m, 1)).astype(np.float32)
+                pts = s.grip + (s.tip - s.grip) * t
+                ctx.particles.emit(m, pts, (0, -40), spread_vel=50, life=(0.4, 0.9), size=(1.0, 2.4),
+                                   color=pink, drag=1.2)
+            m = int(np.random.poisson((60.0 + 120.0 * p) * max(0.0, ctx.dt)))
+            xs = np.random.uniform(0, cv.w, (m, 1))
+            ys = np.full((m, 1), cv.h + 4.0)
+            ctx.particles.emit(m, np.hstack([xs, ys]).astype(np.float32), (0, -0.25 * ctx.diag), spread_vel=40,
+                               life=(0.6, 1.2), size=(1.0, 2.2), color=pink if np.random.rand() < 0.7 else WHITE,
+                               drag=0.6)
+        elif self.phase == Phase.ACTIVE:
+            ctx.aura_boost = max(ctx.aura_boost, 1.8)
+        elif self.phase == Phase.IMPACT:
+            ctx.aura_boost = max(ctx.aura_boost, 1.5 * (1.0 - self.progress))
+
+    def _sb_render(self, ctx: Context) -> None:
+        cv = ctx.canvas
+        pink = tuple(self._sb(ctx).get("color", (190, 120, 255)))
+        if self.mode == SEAL:
+            if self.phase == Phase.ACTIVE:
+                k = 1.0 - self.progress
+                cv.dim = max(cv.dim, 0.25 * k)
+            return
+        if self.phase == Phase.CHARGING:
+            if self.t < self.dim_time:
+                cv.dim = max(cv.dim, self.dim_amount * smoothstep(self.t / max(1e-3, self.dim_time)))
+                return
+            cv.dim = max(cv.dim, self.dim_amount)
+        elif self.phase == Phase.ACTIVE:
+            cv.dim = max(cv.dim, self.dim_amount * (1.0 - 0.4 * self.progress))
+            # Pink tint on the white flash: a wash over the (low-res) glow layer.
+            k = 0.45 * (1.0 - smoothstep(self.progress)) * cv.intensity
+            cv.glow += np.array(pink, np.float32) * k
+        elif self.phase == Phase.IMPACT:
+            cv.dim = max(cv.dim, self.dim_amount * 0.6 * (1.0 - smoothstep(self.progress)))
+
     # --- persistent Bankai ambience ----------------------------------------
     def _ensure_vignette(self, cv: Canvas) -> None:
         if self._vig_size == (cv.w, cv.h, cv.gw, cv.gh) and self._vig_dark is not None:
@@ -506,7 +657,8 @@ class Bankai(Ability):
     def _render_ambient(self, ctx: Context) -> None:
         """Dark pulsing vignette with red edges and falling black-red embers while in Bankai."""
         target = 0.0
-        if ctx.level == BANKAI:
+        tensa = (self.style if self.phase != Phase.IDLE else ctx.bankai_style) != SENBON
+        if ctx.level == BANKAI and tensa:
             target = 1.0
             if self.mode == RELEASE and self.phase == Phase.IMPACT:
                 target = smoothstep(self.progress)

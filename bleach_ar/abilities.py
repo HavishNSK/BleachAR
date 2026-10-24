@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -87,6 +87,16 @@ class Context:
     aura_boost: float = 0.0
     # Set while a transformation sequence plays; blocks other triggers.
     locked_by: Optional[str] = None
+    # 0 = blade drawn normally, 1 = blade fully sunk/dissolved (Senbonzakura
+    # lowers the sword into the ground and it stays hidden during that Bankai).
+    sword_sink: float = 0.0
+    # Which Bankai plays: "tensa" (crimson black-blade release) or "senbonzakura".
+    # app.py initialises it from cfg['abilities']['bankai']['style']; the B key
+    # cycles it, but only while not in (or transforming into) Bankai.
+    bankai_style: str = "senbonzakura"
+    # The persistent Senbonzakura blade swarm (senbonzakura.BladeSwarm), owned
+    # by AbilityManager; None when an ability runs without a manager.
+    swarm: Optional[Any] = None
     titles: List[Title] = field(default_factory=list)
 
     @property
@@ -96,7 +106,12 @@ class Context:
     def energy_color(self) -> Tuple[int, int, int]:
         """Current spiritual-energy color for the transformation level."""
         ab = self.cfg["abilities"]
+        senbon = self.bankai_style == "senbonzakura"
+        if senbon and self.locked_by == "bankai":  # Senbonzakura activation / release
+            return tuple(ab["senbonzakura"]["color"])
         if self.level == BANKAI:
+            if senbon:
+                return tuple(ab["senbonzakura"]["color"])
             return tuple(ab["bankai"]["color"])
         if self.level == SHIKAI:
             return tuple(ab["shikai"]["color"])
@@ -211,11 +226,15 @@ class AbilityManager:
         from .cero import Cero
         from .eyes import EyeEffects
         from .getsuga import GetsugaTensho
+        from .senbonzakura import BladeSwarm, SenbonzakuraAttack
         from .sword import Zanpakuto
         from .transform import Bankai, Shikai
 
         ab = ctx.cfg["abilities"]
         self.ctx = ctx
+        ctx.sword_sink = 0.0
+        self.swarm = BladeSwarm(ab["senbonzakura"])
+        ctx.swarm = self.swarm
         self.sword = Zanpakuto(ctx.cfg)
         self.aura = ReiatsuAura(ctx.cfg)
         self.eyes = EyeEffects(ctx.cfg)
@@ -224,11 +243,26 @@ class AbilityManager:
             "shikai": Shikai(ab["shikai"]),
             "bankai": Bankai(ab["bankai"]),
             "cero": Cero(ab["cero"]),
+            "senbon_attack": SenbonzakuraAttack(ab["senbonzakura"]),
         }
 
+    def routed(self, name: str) -> str:
+        """In Senbonzakura Bankai the Getsuga key / sword swing commands the blades."""
+        if name == "getsuga" and self.ctx.level == BANKAI and self.ctx.bankai_style == "senbonzakura":
+            return "senbon_attack"
+        return name
+
     def trigger(self, name: str) -> bool:
-        ab = self.abilities.get(name)
-        return bool(ab and ab.trigger(self.ctx))
+        ab = self.abilities.get(self.routed(name))
+        ok = bool(ab and ab.trigger(self.ctx))
+        if ok and ab is self.abilities["bankai"]:
+            # A transformation (or its release) takes over the scene: cancel any
+            # attack still in flight so it can't play through the sequence or
+            # re-command a swarm that is dispersing.
+            for other in self.abilities.values():
+                if other is not ab and other.busy:
+                    other.reset(self.ctx)
+        return ok
 
     def update(self) -> None:
         ctx = self.ctx
@@ -236,21 +270,43 @@ class AbilityManager:
         self.sword.update(ctx)
         for ab in self.abilities.values():
             ab.update(ctx)
+        self._update_swarm()
         self.aura.update(ctx)
         self.eyes.update(ctx)
         ctx.particles.update(ctx.dt)
         ctx.titles = [t for t in ctx.titles if ctx.now - t.start < t.duration]
 
+    def _update_swarm(self) -> None:
+        """Keep the blade swarm consistent with the transformation level."""
+        ctx, sw = self.ctx, self.swarm
+        bankai = self.abilities["bankai"]
+        from .senbonzakura import DISPERSE, OFF, senbon_active
+        if senbon_active(ctx):
+            # Level set without the activation (or swarm faded): appear on the orbit.
+            if not bankai.busy and sw.mode in (OFF, DISPERSE):
+                sw.spawn_orbit(ctx)
+        else:
+            atk = self.abilities["senbon_attack"]
+            if atk.phase != Phase.IDLE:
+                atk.reset(ctx)
+            releasing = bankai.busy and bankai.mode == "release"
+            if not releasing and sw.mode not in (OFF, DISPERSE):
+                sw.disperse(ctx)
+        sw.update(ctx)
+
     def render(self) -> None:
-        """Back-to-front: aura, eyes/mask, sword, abilities, particles."""
+        """Back-to-front: aura, far-side blades, eyes/mask, sword, abilities,
+        near-side blades, particles."""
         ctx = self.ctx
         if ctx.show_aura:
             self.aura.render(ctx)
+        self.swarm.render(ctx, "back")
         self.eyes.render(ctx)
         if ctx.show_sword:
             self.sword.render(ctx)
         for ab in self.abilities.values():
             ab.render(ctx)
+        self.swarm.render(ctx, "front")
         ctx.particles.render(ctx.canvas)
 
     def reset(self) -> None:
@@ -261,6 +317,9 @@ class AbilityManager:
         ctx.sword = SwordPose()
         ctx.level = SEALED
         ctx.locked_by = None
+        ctx.sword_sink = 0.0
+        self.swarm.clear()
+        # ctx.bankai_style is kept (the user's last choice).
         ctx.titles.clear()
         ctx.particles.clear()
         ctx.canvas.flash = 0.0
