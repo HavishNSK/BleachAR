@@ -1,11 +1,11 @@
-"""Senbonzakura Kageyoshi: Byakuya Kuchiki's Bankai as a swarm of tiny blades.
+"""Senbonzakura Kageyoshi: Byakuya Kuchiki's Bankai as a swarm of cherry-blossom petals.
 
 Three pieces:
 
 * ``BladeSwarm`` - a fixed-capacity, vectorised (numpy structure-of-arrays)
-  system of small luminous blades. Each blade has position, velocity, a
-  facing direction, spin, length/aspect, colour, glow and its own orbit
-  parameters. The swarm has one behaviour mode at a time:
+  system of sakura petals (in the anime the thousand blades look like petals).
+  Each petal has position, velocity, a facing direction, spin, a tumble
+  phase, size, colour, glow and its own orbit parameters. The swarm has one behaviour mode at a time:
 
       SCATTER   free flight after the blade pillars shatter (-> RETURN)
       ORBIT     tilted rings around the body at different radii/heights/speeds
@@ -22,9 +22,13 @@ Three pieces:
   back blades are smaller, dimmer, drawn before it, and fade where they pass
   behind the person's segmentation mask.
 
-  Blades are drawn as sword silhouettes (pointed tip, widest near the base)
-  with ``cv2.fillConvexPoly`` at 1/16-pixel precision plus a hot core, and a
-  cheap glow splat into the low-res glow layer.
+  Petals are real sakura shapes (narrow at the stem, round lobes either side
+  of a notched tip), painted opaquely over the camera image with alpha
+  (pastel pink, a deeper pink base and a pale vein) rather than as additive
+  light, so they stay pink on bright backgrounds. Each petal tumbles: its
+  width follows |cos| of a per-petal flip phase, and its back face is a
+  touch darker. A faint pink glow splat and motion streaks for fast petals
+  keep the spiritual-energy feel.
 
 * ``PillarField`` - the forest of large blades that rise from the ground
   during the Bankai charge and shatter into the swarm on release.
@@ -57,16 +61,17 @@ OFF, SCATTER, ORBIT, RETURN, FORMATION, ATTACK, BURST, DISPERSE = (
     "off", "scatter", "orbit", "return", "formation", "attack", "burst", "disperse")
 FREE_MODES = (SCATTER, BURST, DISPERSE)
 
-# Blade silhouette in local units: x along the blade (+0.5 = tip), y across
-# (+-1 = half width at the widest point, near the base). Convex, 7 vertices.
-_BLADE = np.array([[0.50, 0.0], [0.08, 0.72], [-0.36, 1.0], [-0.50, 0.55],
-                   [-0.50, -0.55], [-0.36, -1.0], [0.08, -0.72]], np.float32)
-# A petal: shorter, rounder (only a small fraction of the swarm).
-_a = np.linspace(0, 2 * math.pi, 7, endpoint=False)
-_PETAL = np.stack([0.32 * np.cos(_a), 2.4 * np.sin(_a)], 1).astype(np.float32)
-_TEMPLATES = np.stack([_BLADE, _PETAL], 0)  # (2, 7, 2)
-# Hot core: a thin diamond along the blade's spine.
-_CORE = np.array([[0.36, 0.0], [-0.1, 0.3], [-0.42, 0.0], [-0.1, -0.3]], np.float32)
+# Sakura petal outline in local units: x along the petal (-0.5 = stem,
+# +0.5 = tip), y across (+-1 = half width at the widest point). Two rounded
+# lobes either side of the notch at the tip; not convex, so it is drawn with
+# fillPoly.
+_HALF = np.array([[-0.50, 0.00], [-0.42, 0.20], [-0.28, 0.46], [-0.10, 0.72], [0.08, 0.90],
+                  [0.24, 0.99], [0.36, 0.95], [0.45, 0.78], [0.50, 0.52], [0.48, 0.26]], np.float32)
+_NOTCH = np.array([[0.37, 0.0]], np.float32)
+_PETAL = np.concatenate([_HALF, _NOTCH, (_HALF * (1, -1))[::-1][:-1]], 0)
+# Deeper-pink base of the petal (where it joins the flower).
+_BASE = np.array([[-0.50, 0.0], [-0.40, 0.24], [-0.24, 0.40], [-0.12, 0.0], [-0.24, -0.40],
+                  [-0.40, -0.24]], np.float32)
 
 
 def senbon_active(ctx: Context) -> bool:
@@ -80,6 +85,13 @@ def _finite(p) -> bool:
 def _colors(params: dict) -> np.ndarray:
     return np.array([params.get("color", (190, 120, 255)), params.get("accent_color", (235, 80, 255)),
                      params.get("core_color", (250, 235, 255))], np.float32)
+
+
+def _petal_colors(params: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(light petal, deep base, pale tip) colours, BGR."""
+    return (np.array(params.get("petal_color", (196, 168, 255)), np.float32),
+            np.array(params.get("petal_base_color", (150, 80, 225)), np.float32),
+            np.array(params.get("petal_tip_color", (232, 218, 255)), np.float32))
 
 
 def measure_anchor(ctx: Context) -> Optional[Tuple[np.ndarray, float]]:
@@ -236,11 +248,16 @@ class BladeSwarm:
         self.depth = np.zeros(N, np.float32)
         self.occ = np.ones(N, np.float32)
         # Static per-blade looks.
-        self.length_k = rng.uniform(0.7, 1.3, N).astype(np.float32)
-        self.aspect = rng.uniform(0.075, 0.11, N).astype(np.float32)
-        self.kind = (rng.random(N) < 0.08).astype(np.int32)  # 1 = petal
+        self.length_k = rng.uniform(0.75, 1.25, N).astype(np.float32)
+        self.aspect = rng.uniform(0.32, 0.42, N).astype(np.float32)  # half width / length
         self.col_idx = rng.choice(3, N, p=[0.55, 0.27, 0.18]).astype(np.int32)
+        self.tint = rng.uniform(0.0, 1.0, N).astype(np.float32)  # 0 pale .. 1 deeper pink
         self.glow_k = rng.uniform(0.6, 1.2, N).astype(np.float32)
+        # Tumble: each petal flips around its long axis at its own rate.
+        self.flip = rng.uniform(0, 2 * math.pi, N).astype(np.float32)
+        self.flip_speed = (rng.uniform(2.5, 7.0, N) * rng.choice([-1.0, 1.0], N)).astype(np.float32)
+        self._paint: Optional[np.ndarray] = None
+        self._alpha: Optional[np.ndarray] = None
         # Orbit parameters: a few tilted ring bands at different heights/radii/
         # speeds, each carrying two ribbons of blades that flow together.
         nb = 5
@@ -461,6 +478,7 @@ class BladeSwarm:
         speed = self._p("orbit_speed", 1.0)
         self.theta[:n] += self.speed_k[:n] * 1.35 * speed * dt
         self.theta[:n] = np.mod(self.theta[:n], 2 * math.pi)
+        self.flip[:n] = np.mod(self.flip[:n] + self.flip_speed[:n] * dt, 2 * math.pi)
 
         pref = None
         depth_tgt = 0.55
@@ -569,46 +587,88 @@ class BladeSwarm:
         ids = ids[np.argsort(depth[ids])]
         dk = (depth[ids] + 1.0) * 0.5  # 0 = far side of the ring, 1 = near side
         bright = self.alpha[ids] * self.occ[ids] * (0.35 + 0.65 * dk) * inten
-        size = (0.62 + 0.55 * dk) * self.length_k[ids] * (0.021 * ctx.diag * self._p("blade_size", 1.0))
-        # Motion stretch: fast blades read as streaks.
-        sp = np.linalg.norm(self.vel[ids], axis=1) / ctx.diag
-        size = size * (1.0 + 0.7 * np.clip(sp - 0.3, 0.0, 1.0))
+        size = (0.62 + 0.55 * dk) * self.length_k[ids] * (0.026 * ctx.diag * self._p("blade_size", 1.0))
         c = self.pos[ids]
         on = (bright > 0.02) & (c[:, 0] > -size) & (c[:, 0] < cv.w + size) & (c[:, 1] > -size) & (c[:, 1] < cv.h + size)
         if not on.any():
             return
         ids, bright, size, c = ids[on], bright[on], size[on], c[on]
+        self._render_petals(ctx, ids, bright, size, c, inten)
+
+    def _render_petals(self, ctx: Context, ids: np.ndarray, bright: np.ndarray, size: np.ndarray,
+                       c: np.ndarray, inten: float) -> None:
+        cv = ctx.canvas
+        frame = cv.frame
+        light_col, base_col, tip_col = _petal_colors(self.params)
         d = self.dir[ids]
         nrm = np.stack([-d[:, 1], d[:, 0]], 1)
-        hw = np.maximum(size * self.aspect[ids], 1.1)
-        tm = _TEMPLATES[self.kind[ids]]  # (m, 7, 2)
-        P = (c[:, None, :] + (tm[:, :, :1] * size[:, None, None]) * d[:, None, :]
-             + (tm[:, :, 1:] * hw[:, None, None]) * nrm[:, None, :])
-        Q = (c[:, None, :] + (_CORE[None, :, :1] * size[:, None, None]) * d[:, None, :]
-             + (_CORE[None, :, 1:] * hw[:, None, None]) * nrm[:, None, :])
-        P = np.round(P * 16).astype(np.int32)
-        Q = np.round(Q * 16).astype(np.int32)
-        # Each blade: a dark silhouette stamped into the camera image (so it reads
-        # as saturated pink on bright backgrounds instead of clipping to white),
-        # additive pink light on top, and a hot white spine on the brighter ones.
-        # Only clearly visible blades are stamped (a stamp can't be blended).
-        stamp = (bright > 0.55 * inten) & (self.occ[ids] > 0.8) if cv.frame is not None else np.zeros(len(ids), bool)
-        dark = (colors[self.col_idx[ids]] * 0.22).tolist()
-        body = (colors[self.col_idx[ids]] * (0.85 * bright)[:, None]).tolist()
-        core = (colors[2] * np.minimum(1.0, bright * 1.1)[:, None]).tolist()
-        light, frame = cv.light, cv.frame
-        for j in range(len(ids)):
-            if stamp[j]:
-                cv2.fillConvexPoly(frame, P[j], dark[j], cv2.LINE_AA, 4)
-            cv2.fillConvexPoly(light, P[j], body[j], cv2.LINE_AA, 4)
-            if bright[j] > 0.3:
-                cv2.fillConvexPoly(light, Q[j], core[j], cv2.LINE_AA, 4)
-        # Soft halo: one splat per blade into the low-res glow layer.
+        flip = np.cos(self.flip[ids])
+        hw = np.maximum(size * self.aspect[ids] * (0.22 + 0.78 * np.abs(flip)), 0.8)
+        P = (c[:, None, :] + (_PETAL[None, :, :1] * size[:, None, None]) * d[:, None, :]
+             + (_PETAL[None, :, 1:] * hw[:, None, None]) * nrm[:, None, :])
+        B = (c[:, None, :] + (_BASE[None, :, :1] * size[:, None, None]) * d[:, None, :]
+             + (_BASE[None, :, 1:] * hw[:, None, None]) * nrm[:, None, :])
+        vein_a = c - d * (0.40 * size)[:, None]
+        vein_b = c + d * (0.02 * size)[:, None]
+        # Colour: pale..deeper pink per petal, back face slightly darker.
+        t = self.tint[ids][:, None]
+        shade = np.where(flip < 0, 0.86, 1.0)[:, None]
+        body = (light_col * (1.0 - 0.45 * t) + base_col * (0.45 * t)) * shade
+        base = base_col * shade
+        vein = tip_col
+        opacity = np.clip(bright / max(inten, 1e-3), 0.0, 1.0) * 0.95
+
+        if frame is not None:
+            h, w = frame.shape[:2]
+            if self._paint is None or self._paint.shape[:2] != (h, w):
+                self._paint = np.zeros((h, w, 3), np.uint8)
+                self._alpha = np.zeros((h, w), np.uint8)
+            paint, amask = self._paint, self._alpha
+            x0 = int(max(0, np.floor((c[:, 0] - size).min())))
+            y0 = int(max(0, np.floor((c[:, 1] - size).min())))
+            x1 = int(min(w, np.ceil((c[:, 0] + size).max()) + 1))
+            y1 = int(min(h, np.ceil((c[:, 1] + size).max()) + 1))
+            if x1 > x0 and y1 > y0:
+                paint[y0:y1, x0:x1] = 0
+                amask[y0:y1, x0:x1] = 0
+                Pi = np.round(P * 16).astype(np.int32)
+                Bi = np.round(B * 16).astype(np.int32)
+                av = (opacity * 255).astype(np.int32).tolist()
+                bl, bs, vc = body.tolist(), base.tolist(), vein.tolist()
+                va = np.round(vein_a).astype(np.int32)
+                vb = np.round(vein_b).astype(np.int32)
+                for j in range(len(ids)):  # back to front (ids are depth-sorted)
+                    cv2.fillPoly(paint, [Pi[j]], bl[j], cv2.LINE_AA, 4)
+                    cv2.fillPoly(amask, [Pi[j]], av[j], cv2.LINE_AA, 4)
+                    if size[j] > 7:
+                        cv2.fillConvexPoly(paint, Bi[j], bs[j], cv2.LINE_AA, 4)
+                        cv2.line(paint, tuple(va[j]), tuple(vb[j]), vc, 1, cv2.LINE_AA)
+                # Blend only the petal pixels into the camera image.
+                roi_a = amask[y0:y1, x0:x1]
+                ys, xs = np.nonzero(roi_a)
+                if ys.size:
+                    a = roi_a[ys, xs].astype(np.float32)[:, None] * (1.0 / 255.0)
+                    f = frame[y0:y1, x0:x1]
+                    src = f[ys, xs].astype(np.float32)
+                    f[ys, xs] = (src + (paint[y0:y1, x0:x1][ys, xs].astype(np.float32) - src) * a).astype(np.uint8)
+
+        # Spiritual-energy hints: a faint pink halo per petal and streaks
+        # behind fast petals (additive layers).
+        colors = _colors(self.params)
         gp = (c * cv.gs).astype(np.int32)
         ok = (gp[:, 0] >= 0) & (gp[:, 0] < cv.gw) & (gp[:, 1] >= 0) & (gp[:, 1] < cv.gh)
         if ok.any():
-            gcol = colors[self.col_idx[ids]] * (bright * self.glow_k[ids] * size * 0.16)[:, None]
+            gcol = colors[self.col_idx[ids]] * (bright * self.glow_k[ids] * size * 0.07)[:, None]
             np.add.at(cv.glow, (gp[ok, 1], gp[ok, 0]), gcol[ok])
+        vel = self.vel[ids]
+        sp = np.linalg.norm(vel, axis=1) / ctx.diag
+        fast = np.nonzero(sp > 0.45)[0]
+        if fast.size:
+            tails = c[fast] - vel[fast] * 0.018
+            k = np.clip((sp[fast] - 0.45) * 1.5, 0.0, 1.0) * bright[fast]
+            for j, a, b in zip(range(fast.size), tails, c[fast]):
+                cv2.line(cv.light, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])),
+                         tuple(float(x) * 0.45 * k[j] for x in colors[0]), 1, cv2.LINE_AA)
 
 
 class SenbonzakuraAttack(Ability):

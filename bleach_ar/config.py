@@ -155,6 +155,10 @@ DEFAULTS: Dict[str, Any] = {
             "color": [190, 120, 255],  # pink (BGR)
             "accent_color": [235, 80, 255],  # magenta
             "core_color": [250, 235, 255],
+            # Sakura petal paint (BGR): body, deeper base, pale vein.
+            "petal_color": [196, 168, 255],
+            "petal_base_color": [150, 80, 225],
+            "petal_tip_color": [232, 218, 255],
             # Commanded attack (Getsuga key / swing while in this Bankai).
             "charge": 0.35,
             "active": 1.1,
