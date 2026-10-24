@@ -68,6 +68,7 @@ python -m bleach_ar --demo
 | `Q` | Quality: low / medium / high |
 | `D` | Show tracking landmarks |
 | `F` | Fullscreen |
+| `V` | Switch to the next camera (e.g. built-in webcam vs iPhone Continuity Camera) |
 | `R` | Reset all abilities and transformations |
 | `H` | Show/hide controls |
 | `ESC` | Exit |
@@ -213,6 +214,7 @@ The 33 tests cover:
 
 | Problem | Fix |
 |---|---|
+| It shows your iPhone instead of the Mac's webcam (Continuity Camera) | Press `V` to switch cameras, or put `{"camera": {"index": 1}}` in `config.json` (or run with `--camera 1`). |
 | "Could not read frames from camera 0" | Grant camera permission (see Quick start), close other apps using the camera, or try `--camera 1`. |
 | Pose-model download fails (SSL error on macOS) | `pip install certifi` (already in requirements). If it still fails, the app falls back to the bundled full model automatically. |
 | `mediapipe has no attribute 'solutions'` | Install the pinned version: `pip install mediapipe==0.10.21`. |

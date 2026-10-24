@@ -223,6 +223,7 @@ class HUD:
             ("cycle_quality", "Quality low / medium / high"),
             ("toggle_debug", "Show tracking landmarks"),
             ("fullscreen", "Fullscreen"),
+            ("next_camera", "Switch camera (e.g. built-in vs iPhone)"),
             ("reset", "Reset abilities and transformations"),
             ("help", "Hide this help"),
             ("exit", "Exit"),

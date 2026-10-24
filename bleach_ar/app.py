@@ -164,8 +164,18 @@ class BleachAR:
         try:
             if self.camera is None:
                 src = "synthetic" if self.demo else self.source
-                self.camera = Camera(src, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"],
-                                     mirror=cam_cfg["mirror"]).start()
+                try:
+                    cam = Camera(src, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"], mirror=cam_cfg["mirror"])
+                except CameraError:
+                    # macOS renumbers cameras when an iPhone (Continuity Camera)
+                    # connects or disconnects, so fall back to any working index.
+                    if not isinstance(src, int):
+                        raise
+                    cam = self._open_other_camera(src)
+                    if cam is None:
+                        raise
+                    print(f"Camera {src} unavailable; using camera {self.source} instead (press V to switch).")
+                self.camera = cam.start()
             if self.tracker is None and not self.demo:
                 self._make_tracker()
         except CameraError as exc:
@@ -258,8 +268,41 @@ class BleachAR:
             self.gestures.reset()
         elif action == "help":
             self.hud.show_help = not self.hud.show_help
+        elif action == "next_camera":
+            self._next_camera()
         elif action == "fullscreen":
             pg.display.toggle_fullscreen()
+
+    def _open_other_camera(self, current: int) -> Optional[Camera]:
+        """Open the next camera index after ``current`` that delivers frames."""
+        cam_cfg = self.cfg["camera"]
+        for step in range(1, 5):
+            idx = (current + step) % 5
+            if idx == current:
+                continue
+            try:
+                cam = Camera(idx, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"], mirror=cam_cfg["mirror"])
+            except CameraError:
+                continue
+            self.source = idx
+            return cam
+        return None
+
+    def _next_camera(self) -> None:
+        """Switch to the next working camera (e.g. built-in webcam vs iPhone)."""
+        if self.demo or not isinstance(self.source, int):
+            return
+        if self.camera is not None:
+            self.camera.release()  # macOS may refuse a second open of the same device
+            self.camera = None
+        previous = self.source
+        cam = self._open_other_camera(previous)
+        if cam is None:
+            self._start_pipeline()  # reopen the original camera
+            self.ctx.show_title("NO OTHER CAMERA", "", (180, 180, 255), 1.2)
+            return
+        self.camera = cam.start()
+        self.ctx.show_title(f"CAMERA {self.source}", "press V again to switch", (255, 255, 255), 1.2)
 
     def _handle_calibration_key(self, event) -> bool:
         pg, g = self.pg, self.cfg["gestures"]

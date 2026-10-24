@@ -173,6 +173,7 @@ DEFAULTS: Dict[str, Any] = {
         "reset": "r",
         "help": "h",
         "fullscreen": "f",
+        "next_camera": "v",
         "exit": "escape",
     },
 }

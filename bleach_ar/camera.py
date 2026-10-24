@@ -41,7 +41,8 @@ def camera_help(source) -> str:
         )
     elif platform.system() == "Windows":
         msg.append("Windows: check Settings > Privacy > Camera and close other apps using the webcam.")
-    msg.append("Try another index with --camera 1, or test without a camera using --source synthetic.")
+    other = 1 if source == 0 else 0
+    msg.append(f"Try another index with --camera {other}, or test without a camera using --demo.")
     return "\n".join(msg)
 
 
