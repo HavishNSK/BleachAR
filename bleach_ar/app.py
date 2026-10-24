@@ -135,7 +135,10 @@ class BleachAR:
 
         self.pg = pygame
         self.cfg = cfg
-        self.source = resolve_camera(source if source is not None else cfg["camera"]["index"])
+        # "auto" is resolved when the camera is opened (see _start_pipeline):
+        # macOS only lists an iPhone Continuity Camera once the app has a window.
+        self.camera_pref = source if source is not None else cfg["camera"]["index"]
+        self.source = self.camera_pref if self.camera_pref != "auto" else 0
         self.demo = demo
         self.max_frames = max_frames
         self.camera: Optional[Camera] = None
@@ -183,6 +186,8 @@ class BleachAR:
         cam_cfg = self.cfg["camera"]
         try:
             if self.camera is None:
+                if self.camera_pref == "auto" and not self.demo:
+                    self.source = resolve_camera("auto")
                 src = "synthetic" if self.demo else self.source
                 try:
                     cam = Camera(src, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"], mirror=cam_cfg["mirror"])
@@ -195,6 +200,8 @@ class BleachAR:
                     if cam is None:
                         raise
                     print(f"Camera {src} unavailable; using camera {self.source} instead (press V to switch).")
+                if self.camera_pref == "auto" and not self.demo:
+                    cam = self._recheck_builtin(cam)
                 self.camera = cam.start()
             if self.tracker is None and not self.demo:
                 self._make_tracker()
@@ -298,6 +305,23 @@ class BleachAR:
     def cycle_bankai_style(self) -> bool:
         """Toggle Senbonzakura / Tensa. Only while sealed/shikai and Bankai is idle."""
         return cycle_bankai_style(self.ctx, self.manager)
+
+    def _recheck_builtin(self, cam: Camera) -> Camera:
+        """Opening a camera can make an iPhone appear and shift the numbering;
+        if the built-in webcam moved, reopen it at its new index."""
+        idx = resolve_camera("auto", quiet=True)
+        if idx == self.source:
+            return cam
+        cam.release()
+        cam_cfg = self.cfg["camera"]
+        try:
+            new = Camera(idx, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"], mirror=cam_cfg["mirror"])
+        except CameraError:
+            # Couldn't reopen; go back to what we had.
+            return Camera(self.source, cam_cfg["width"], cam_cfg["height"], cam_cfg["fps"], mirror=cam_cfg["mirror"])
+        print(f"Camera list changed after opening; switched to the built-in camera at index {idx}.")
+        self.source = idx
+        return new
 
     def _open_other_camera(self, current: int) -> Optional[Camera]:
         """Open the next camera index after ``current`` that delivers frames."""

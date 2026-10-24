@@ -74,7 +74,7 @@ def list_cameras() -> List[Tuple[int, str, bool]]:
     return out
 
 
-def resolve_camera(source):
+def resolve_camera(source, quiet: bool = False):
     """Turn ``"auto"`` into a camera index, preferring the built-in webcam.
 
     macOS renumbers cameras whenever an iPhone connects as a Continuity
@@ -83,13 +83,16 @@ def resolve_camera(source):
     if source != "auto":
         return source
     cams = list_cameras()
+    if not quiet and len(cams) > 1:
+        print("Cameras: " + ", ".join(f"{i}={n}" for i, n, _ in cams))
     for idx, name, builtin in cams:
         if builtin:
-            print(f"Using camera {idx}: {name}")
+            if not quiet:
+                print(f"Using camera {idx}: {name}")
             return idx
-    if cams:
+    if cams and not quiet:
         print(f"Using camera {cams[0][0]}: {cams[0][1]}")
-    return 0
+    return cams[0][0] if cams else 0
 
 
 class SyntheticSource:
